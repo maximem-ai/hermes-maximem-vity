@@ -14,22 +14,35 @@ Vity gives the agent a persistent memory graph (facts, preferences, emotions, ep
 ### Option A — one-liner (recommended)
 
 ```bash
-hermes plugins install <your-org>/hermes-vity-memory
+hermes plugins install uday-maximem-ai/hermes-vity-memory
 hermes memory setup vity
 ```
+
+> This repo is **private**. `hermes plugins install` clones over your authenticated Git
+> credentials, so it works for you (and anyone you grant access). To distribute publicly,
+> flip the repo to public — see "Making it public" below.
 
 `hermes plugins install` clones this repo and (because `plugin.yaml` declares `name: vity`) installs it to `~/.hermes/plugins/vity/`. `hermes memory setup vity` then `pip install`s the SDK, prompts for your API key, and sets `memory.provider: vity`.
 
 ### Option B — manual
 
 ```bash
-git clone https://github.com/<your-org>/hermes-vity-memory ~/.hermes/plugins/vity
+git clone https://github.com/uday-maximem-ai/hermes-vity-memory ~/.hermes/plugins/vity
 pip install maximem-vity-sdk
 hermes config set memory.provider vity
 echo 'MAXIMEM_API_KEY=mx_...' >> ~/.hermes/.env
 ```
 
 Get an API key at [maximem.ai/dashboard](https://maximem.ai/dashboard) (starts with `mx_`).
+
+### Making it public
+
+While the repo is private, only authenticated users (you, plus collaborators you add)
+can `hermes plugins install` it. To let anyone install it:
+
+```bash
+gh repo edit uday-maximem-ai/hermes-vity-memory --visibility public
+```
 
 ---
 

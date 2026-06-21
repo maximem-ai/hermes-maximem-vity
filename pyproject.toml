@@ -23,7 +23,7 @@ dev = [
 [project.urls]
 Homepage = "https://maximem.ai"
 Documentation = "https://docs.maximem.ai/vity"
-Repository = "https://github.com/maximem-ai/hermes-vity-memory"
+Repository = "https://github.com/uday-maximem-ai/hermes-vity-memory"
 
 # NOTE: The proven activation path is the directory install into
 # ~/.hermes/plugins/vity/ (Hermes' discover_memory_providers() scans that dir).
