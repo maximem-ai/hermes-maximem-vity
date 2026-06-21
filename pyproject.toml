@@ -12,7 +12,7 @@ requires-python = ">=3.10"
 authors = [{ name = "Maximem AI", email = "hello@maximem.ai" }]
 keywords = ["hermes", "hermes-agent", "memory", "vity", "maximem", "llm-memory", "semantic-memory"]
 dependencies = [
-    "maximem-vity-sdk>=0.1.0,<1",
+    "maximem-vity-sdk>=0.2.0,<1",
 ]
 
 [project.optional-dependencies]

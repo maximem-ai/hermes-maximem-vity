@@ -22,6 +22,40 @@ import json as _json
 import sys
 
 
+def _load_config() -> dict:
+    """Self-contained config loader for the CLI.
+
+    The CLI module is imported in a lightweight path where the plugin's parent
+    package (``_hermes_user_memory.vity``) is NOT registered, so relative
+    imports (``from . import ...``) fail. This reads env + ``vity.json``
+    directly, mirroring the provider's loader, with no package dependency.
+    """
+    import os
+
+    cfg = {
+        "api_key": (
+            os.environ.get("MAXIMEM_API_KEY")
+            or os.environ.get("VITY_API_KEY")
+            or ""
+        ),
+        "auto_recall": True,
+        "auto_capture": True,
+        "max_recall_tokens": 1000,
+        "min_prompt_length": 5,
+    }
+    try:
+        from hermes_constants import get_hermes_home
+        path = get_hermes_home() / "vity.json"
+        if path.exists():
+            data = _json.loads(path.read_text(encoding="utf-8"))
+            for k, v in data.items():
+                if v not in (None, ""):
+                    cfg[k] = v
+    except Exception:
+        pass
+    return cfg
+
+
 def _make_client():
     """Build a VityClient from the active config, or exit with a message."""
     try:
@@ -29,15 +63,6 @@ def _make_client():
     except ImportError:
         print("maximem-vity-sdk not installed. Run: pip install maximem-vity-sdk")
         sys.exit(1)
-
-    # Import the provider's config loader from this same plugin package.
-    try:
-        from . import _load_config  # type: ignore
-    except Exception:
-        import importlib
-        import os
-        sys.path.insert(0, os.path.dirname(__file__))
-        _load_config = importlib.import_module("__init__")._load_config  # type: ignore
 
     cfg = _load_config()
     api_key = cfg.get("api_key", "")
@@ -49,7 +74,6 @@ def _make_client():
 
 
 def _cmd_status() -> None:
-    from . import _load_config  # type: ignore
     cfg = _load_config()
     has_key = bool(cfg.get("api_key"))
     print("Vity (Maximem AI) memory")
