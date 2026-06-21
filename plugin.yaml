@@ -1,0 +1,18 @@
+name: vity
+version: 1.0.0
+manifest_version: 1
+description: "Vity by Maximem AI — cross-session semantic memory with profile-based recall, memory graph, and <100ms context injection."
+
+# Installed automatically by `hermes memory setup vity` (uv pip install).
+pip_dependencies:
+  - maximem-vity-sdk>=0.1.0,<1
+
+# Prompted for during `hermes plugins install` (saved to ~/.hermes/.env).
+requires_env:
+  - name: MAXIMEM_API_KEY
+    description: "Maximem API key (starts with mx_)"
+    url: "https://maximem.ai/dashboard"
+    secret: true
+
+hooks:
+  - on_session_end

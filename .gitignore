@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+
+# Test / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Local config copied from the .example on install — never commit secrets
+vity.json
+.env
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
