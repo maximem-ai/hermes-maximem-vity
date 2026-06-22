@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "hermes-maximem-vity"
-version = "1.0.1"
+version = "1.0.2"
 description = "Vity (Maximem AI) memory provider plugin for Hermes Agent"
 readme = "README.md"
 license = { text = "MIT" }

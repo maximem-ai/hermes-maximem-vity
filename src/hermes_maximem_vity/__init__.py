@@ -15,4 +15,4 @@ wizard). The provider code itself imports Hermes host modules (``agent``,
 package directly.
 """
 
-__version__ = "1.0.1"
+__version__ = "1.0.2"

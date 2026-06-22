@@ -45,6 +45,74 @@ def _target_dir() -> Path:
     return _hermes_home() / "plugins" / PLUGIN_NAME
 
 
+def _env_path() -> Path:
+    return _hermes_home() / ".env"
+
+
+def _key_already_set() -> bool:
+    """True if MAXIMEM_API_KEY (or VITY_API_KEY) is set in env or ~/.hermes/.env."""
+    if os.environ.get("MAXIMEM_API_KEY") or os.environ.get("VITY_API_KEY"):
+        return True
+    env = _env_path()
+    if env.exists():
+        for line in env.read_text(errors="replace").splitlines():
+            s = line.strip()
+            if s.startswith(("MAXIMEM_API_KEY=", "VITY_API_KEY=")) and s.split("=", 1)[1].strip():
+                return True
+    return False
+
+
+def _write_api_key(key: str) -> None:
+    """Write MAXIMEM_API_KEY to ~/.hermes/.env, replacing any existing line.
+
+    Dedupes — never appends a second MAXIMEM_API_KEY (the common copy-paste bug).
+    """
+    env = _env_path()
+    env.parent.mkdir(parents=True, exist_ok=True)
+    lines = env.read_text(errors="replace").splitlines() if env.exists() else []
+    out, found = [], False
+    for line in lines:
+        if line.strip().startswith("MAXIMEM_API_KEY="):
+            if not found:
+                out.append(f"MAXIMEM_API_KEY={key}")
+                found = True
+            # drop any duplicate MAXIMEM_API_KEY lines
+        else:
+            out.append(line)
+    if not found:
+        out.append(f"MAXIMEM_API_KEY={key}")
+    env.write_text("\n".join(out) + "\n")
+    try:
+        env.chmod(0o600)
+    except Exception:
+        pass
+
+
+def _ensure_api_key(api_key: str | None) -> bool:
+    """Make sure an API key is configured. Returns True if a key is now set.
+
+    Priority: --api-key flag > already-set > interactive prompt (tty only).
+    """
+    if api_key:
+        _write_api_key(api_key.strip())
+        print("✓ Saved MAXIMEM_API_KEY to ~/.hermes/.env")
+        return True
+    if _key_already_set():
+        print("✓ MAXIMEM_API_KEY already configured")
+        return True
+    # Prompt only on a real terminal — never hang on piped/buffered input.
+    if sys.stdin.isatty() and sys.stdout.isatty():
+        try:
+            entered = input("\nPaste your Maximem API key (mx_…) or press Enter to skip: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            entered = ""
+        if entered:
+            _write_api_key(entered)
+            print("✓ Saved MAXIMEM_API_KEY to ~/.hermes/.env")
+            return True
+    return False
+
+
 def _activate_provider() -> bool:
     """Set ``memory.provider = vity`` deterministically via the hermes CLI.
 
@@ -66,14 +134,12 @@ def _activate_provider() -> bool:
         return False
 
 
-def cmd_install(force: bool = False) -> int:
+def cmd_install(force: bool = False, api_key: str | None = None) -> int:
     payload = _payload_dir()
     if not payload.is_dir():
         print(f"✗ payload not found at {payload} — broken install?", file=sys.stderr)
         return 1
     target = _target_dir()
-    if target.exists() and not force:
-        print(f"Vity plugin already installed at {target}. Re-run with --force to overwrite.")
     target.mkdir(parents=True, exist_ok=True)
 
     copied = 0
@@ -88,24 +154,35 @@ def cmd_install(force: bool = False) -> int:
     config = target / "vity.json"
     if example.exists() and not config.exists():
         shutil.copy2(example, config)
+    print(f"✓ Plugin files installed to {target} ({copied} files)")
 
-    print(f"✓ Vity plugin installed to {target} ({copied} files)")
+    # 1) API key (flag > already-set > prompt) — written deduped to ~/.hermes/.env
+    key_ok = _ensure_api_key(api_key)
 
-    # Activate non-interactively (avoids the fragile `hermes memory setup` wizard).
+    # 2) Activate non-interactively (avoids the fragile `hermes memory setup` wizard)
     activated = _activate_provider()
     if activated:
         print("✓ Activated: memory.provider = vity")
 
-    print("\nNext steps:")
-    print("  1. Set your key:   echo 'MAXIMEM_API_KEY=mx_...' >> ~/.hermes/.env")
-    if not activated:
-        print("  2. Activate:       hermes config set memory.provider vity")
-        print("  3. Verify:         hermes memory status   (vity should be ← active)")
+    # 3) Clear, honest summary — no guesswork for the user
+    print("\n" + "─" * 52)
+    if key_ok and activated:
+        print("✅ All set! Vity memory is active.")
+        print("   Start Hermes:   hermes")
+        print("   Check it:       hermes vity status")
     else:
-        print("  2. Verify:         hermes memory status   (vity should be ← active)")
-    print("\nGet an API key at https://app.maximem.ai/api-keys")
-    print("Note: use `hermes config set memory.provider vity` to (re)activate —")
-    print("      the interactive `hermes memory setup` wizard can drop the selection.")
+        print("Almost done — finish these:")
+        if not key_ok:
+            print("  • Add your API key:")
+            print("      echo 'MAXIMEM_API_KEY=mx_...' >> ~/.hermes/.env")
+            print("      (get one at https://app.maximem.ai/api-keys)")
+        if not activated:
+            print("  • Activate the provider (hermes wasn't on PATH):")
+            print("      hermes config set memory.provider vity")
+        print("  Then:  hermes vity status")
+    print("─" * 52)
+    print("Tip: do NOT use the interactive `hermes memory setup` to activate —")
+    print("     `hermes config set memory.provider vity` is the reliable way.")
     return 0
 
 
@@ -134,14 +211,16 @@ def main(argv=None) -> int:
         description="Install the Vity (Maximem AI) memory plugin into Hermes.",
     )
     sub = parser.add_subparsers(dest="cmd")
-    p_install = sub.add_parser("install", help="Copy the plugin into ~/.hermes/plugins/vity/")
+    p_install = sub.add_parser("install", help="Install + activate the plugin (one command)")
     p_install.add_argument("--force", action="store_true", help="Overwrite an existing install")
+    p_install.add_argument("--api-key", metavar="mx_…", default=None,
+                           help="Maximem API key — saved to ~/.hermes/.env (deduped)")
     sub.add_parser("uninstall", help="Remove the plugin from ~/.hermes/plugins/vity/")
     sub.add_parser("status", help="Show install location and state")
 
     args = parser.parse_args(argv)
     if args.cmd == "install":
-        return cmd_install(force=getattr(args, "force", False))
+        return cmd_install(force=getattr(args, "force", False), api_key=getattr(args, "api_key", None))
     if args.cmd == "uninstall":
         return cmd_uninstall()
     if args.cmd == "status":

@@ -11,18 +11,28 @@ Vity gives the agent a persistent memory graph (facts, preferences, emotions, ep
 
 ## Install
 
+**Two commands** (get an API key first at [app.maximem.ai/api-keys](https://app.maximem.ai/api-keys)):
+
 ```bash
 pip install hermes-maximem-vity
-hermes-maximem-vity install                    # copies plugin in + activates it
-echo 'MAXIMEM_API_KEY=mx_...' >> ~/.hermes/.env # your key
+hermes-maximem-vity install --api-key mx_your_key_here
 ```
 
-That's it:
-1. **`pip install hermes-maximem-vity`** — installs the plugin and its `maximem-vity-sdk` dependency.
-2. **`hermes-maximem-vity install`** — copies the provider into `~/.hermes/plugins/vity/` (where Hermes auto-discovers it) **and sets `memory.provider: vity`** for you.
-3. **Add your API key** to `~/.hermes/.env`.
+The second command does everything: copies the plugin into `~/.hermes/plugins/vity/`, **saves your API key** to `~/.hermes/.env`, and **activates `memory.provider: vity`**. It prints `✅ All set!` when done. Then just run `hermes`.
 
-> **Don't use the interactive `hermes memory setup` wizard to activate** — pasted/buffered terminal input can silently drop the selection, leaving the provider at "none". `hermes-maximem-vity install` activates it deterministically. If you ever need to re-activate manually, run:
+> Leave off `--api-key` and it'll prompt you (or skip and add the key later). Either way it won't duplicate keys in your `.env`.
+
+<details><summary>Installing with PEP-668 "externally-managed-environment" errors?</summary>
+
+System Python (Homebrew) blocks global `pip install`. Use **pipx** (cleanest) or a venv:
+```bash
+pipx install hermes-maximem-vity          # or: brew install pipx first
+hermes-maximem-vity install --api-key mx_...
+```
+The Maximem SDK is installed into Hermes' own environment automatically — you don't need to match Python versions.
+</details>
+
+> **Never use the interactive `hermes memory setup` wizard to activate** — pasted/buffered terminal input can silently drop the selection, leaving the provider at "none". The `install` command activates deterministically. To re-activate manually any time:
 > ```bash
 > hermes config set memory.provider vity
 > ```
