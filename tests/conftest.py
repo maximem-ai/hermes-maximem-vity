@@ -63,7 +63,8 @@ def vity_module(tmp_path, monkeypatch):
     monkeypatch.setattr(sys.modules["hermes_constants"], "get_hermes_home", lambda: tmp_path)
 
     spec = importlib.util.spec_from_file_location(
-        "vity_plugin_under_test", _REPO_ROOT / "__init__.py"
+        "vity_plugin_under_test",
+        _REPO_ROOT / "src" / "hermes_maximem_vity" / "payload" / "provider.py",
     )
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)

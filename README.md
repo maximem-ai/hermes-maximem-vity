@@ -11,25 +11,35 @@ Vity gives the agent a persistent memory graph (facts, preferences, emotions, ep
 
 ## Install
 
-### Option A — one-liner (recommended)
-
 ```bash
-hermes plugins install maximem-ai/hermes-maximem-vity
+pip install hermes-maximem-vity
+hermes-maximem-vity install
 hermes memory setup vity
 ```
 
-`hermes plugins install` clones this repo and (because `plugin.yaml` declares `name: vity`) installs it to `~/.hermes/plugins/vity/`. `hermes memory setup vity` then `pip install`s the SDK, prompts for your API key, and sets `memory.provider: vity`.
+That's it:
+1. **`pip install hermes-maximem-vity`** — installs the plugin and its `maximem-vity-sdk` dependency.
+2. **`hermes-maximem-vity install`** — copies the provider into `~/.hermes/plugins/vity/`, where Hermes auto-discovers it. *(One-time step: Hermes discovers plugins from that directory, and pip installs to site-packages — this command bridges the two.)*
+3. **`hermes memory setup vity`** — prompts for your API key and sets `memory.provider: vity`.
 
-### Option B — manual
-
+Set your API key (if you skip the prompt):
 ```bash
-git clone https://github.com/maximem-ai/hermes-maximem-vity ~/.hermes/plugins/vity
-pip install maximem-vity-sdk
-hermes config set memory.provider vity
 echo 'MAXIMEM_API_KEY=mx_...' >> ~/.hermes/.env
 ```
 
 Get an API key at [app.maximem.ai/api-keys](https://app.maximem.ai/api-keys) (starts with `mx_`).
+
+**Verify:**
+```bash
+hermes memory status     # vity ← active
+hermes vity status       # API key set ✓, connection ok ✓
+```
+
+**Update / remove:**
+```bash
+pip install -U hermes-maximem-vity && hermes-maximem-vity install --force   # update
+hermes-maximem-vity uninstall                                               # remove
+```
 
 ---
 
@@ -112,15 +122,16 @@ Tests stub the Hermes host modules (`agent.memory_provider`, `tools.registry`, `
 
 ---
 
-## Files
+## Layout
 
-| File | Purpose |
+| Path | Purpose |
 |---|---|
-| `__init__.py` | `VityMemoryProvider` + `register()` entry point. |
-| `plugin.yaml` | Plugin manifest (name, version, deps, required env). |
-| `cli.py` | `hermes vity ...` subcommands. |
-| `vity.json.example` | Non-secret tunables template (copied to `vity.json` on install). |
-| `after-install.md` | Shown after `hermes plugins install`. |
+| `src/hermes_maximem_vity/installer.py` | The `hermes-maximem-vity` console command (`install` / `uninstall` / `status`). |
+| `src/hermes_maximem_vity/payload/provider.py` | `VityMemoryProvider` + `register()` — copied to `~/.hermes/plugins/vity/__init__.py` on install. |
+| `src/hermes_maximem_vity/payload/cli.py` | `hermes vity ...` subcommands. |
+| `src/hermes_maximem_vity/payload/plugin.yaml` | Plugin manifest (deps, required env). |
+| `src/hermes_maximem_vity/payload/vity.json.example` | Non-secret tunables template (seeded to `vity.json` on install). |
+| `src/hermes_maximem_vity/payload/after-install.md` | Post-install notes. |
 | `tests/` | Unit tests + host-module stubs. |
 
 ## License

@@ -25,12 +25,19 @@ Homepage = "https://maximem.ai"
 Documentation = "https://docs.maximem.ai/vity"
 Repository = "https://github.com/maximem-ai/hermes-maximem-vity"
 
-# NOTE: The proven activation path is the directory install into
-# ~/.hermes/plugins/vity/ (Hermes' discover_memory_providers() scans that dir).
-# The entry point below is forward-looking — current Hermes discovery is
-# directory-based and does not yet load providers via entry points.
-[project.entry-points."hermes.memory_providers"]
-vity = "vity:VityMemoryProvider"
+# `pip install hermes-maximem-vity` installs this console command; running
+# `hermes-maximem-vity install` copies the plugin payload into
+# ~/.hermes/plugins/vity/ where Hermes auto-discovers it.
+[project.scripts]
+hermes-maximem-vity = "hermes_maximem_vity.installer:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+# The plugin files are shipped as data (not imported by this package — they
+# import Hermes host modules and only run inside the Hermes process).
+[tool.setuptools.package-data]
+hermes_maximem_vity = ["payload/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
