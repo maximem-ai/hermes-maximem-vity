@@ -28,4 +28,4 @@ hermes vity status       # config + live connection check
 hermes vity search "anything"
 ```
 
-Get an API key at https://maximem.ai/dashboard
+Get an API key at https://app.maximem.ai/api-keys

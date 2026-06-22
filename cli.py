@@ -38,6 +38,11 @@ def _load_config() -> dict:
             or os.environ.get("VITY_API_KEY")
             or ""
         ),
+        "endpoint": (
+            os.environ.get("MAXIMEM_ENDPOINT")
+            or os.environ.get("MAXIMEM_API_URL")
+            or ""
+        ),
         "auto_recall": True,
         "auto_capture": True,
         "max_recall_tokens": 1000,
@@ -70,6 +75,9 @@ def _make_client():
         print("MAXIMEM_API_KEY not set. Add it to ~/.hermes/.env or run:")
         print("  hermes memory setup vity")
         sys.exit(1)
+    endpoint = cfg.get("endpoint", "")
+    if endpoint:
+        return VityClient(api_key=api_key, endpoint=endpoint)
     return VityClient(api_key=api_key)
 
 
@@ -78,6 +86,7 @@ def _cmd_status() -> None:
     has_key = bool(cfg.get("api_key"))
     print("Vity (Maximem AI) memory")
     print(f"  API key:        {'set ✓' if has_key else 'NOT set ✗'}")
+    print(f"  endpoint:       {cfg.get('endpoint') or 'default (prod)'}")
     print(f"  auto_recall:    {cfg.get('auto_recall')}")
     print(f"  auto_capture:   {cfg.get('auto_capture')}")
     print(f"  max_recall_tokens: {cfg.get('max_recall_tokens')}")
@@ -106,10 +115,20 @@ def _cmd_search(query: str, limit: int, as_json: bool) -> None:
     if not results:
         print("No memories found.")
         return
+    # Dedupe near-identical hits the backend sometimes returns for one memory.
+    seen = set()
+    shown = 0
     for r in results:
+        content = (r.get("content") or "").strip()
+        if not content or content in seen:
+            continue
+        seen.add(content)
+        shown += 1
         score = r.get("score", 0.0)
         mtype = r.get("type", "fact")
-        print(f"  [{score:.2f}] ({mtype}) {r.get('content', '')}")
+        print(f"  [{score:.2f}] ({mtype}) {content}")
+    if shown == 0:
+        print("No memories found.")
 
 
 def _cmd_store(content: str, memory_type: str) -> None:

@@ -3,7 +3,7 @@ requires = ["setuptools>=61,<81", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "hermes-vity-memory"
+name = "hermes-maximem-vity"
 version = "1.0.0"
 description = "Vity (Maximem AI) memory provider plugin for Hermes Agent"
 readme = "README.md"
@@ -12,7 +12,7 @@ requires-python = ">=3.10"
 authors = [{ name = "Maximem AI", email = "hello@maximem.ai" }]
 keywords = ["hermes", "hermes-agent", "memory", "vity", "maximem", "llm-memory", "semantic-memory"]
 dependencies = [
-    "maximem-vity-sdk>=0.2.0,<1",
+    "maximem-vity-sdk>=0.2.1,<1",
 ]
 
 [project.optional-dependencies]
@@ -23,7 +23,7 @@ dev = [
 [project.urls]
 Homepage = "https://maximem.ai"
 Documentation = "https://docs.maximem.ai/vity"
-Repository = "https://github.com/uday-maximem-ai/hermes-vity-memory"
+Repository = "https://github.com/maximem-ai/hermes-maximem-vity"
 
 # NOTE: The proven activation path is the directory install into
 # ~/.hermes/plugins/vity/ (Hermes' discover_memory_providers() scans that dir).

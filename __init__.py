@@ -152,6 +152,13 @@ def _load_config() -> dict:
             or os.environ.get("VITY_API_KEY")  # backward compat
             or ""
         ),
+        # Optional endpoint override — point at a self-hosted / local Maximem
+        # backend (e.g. http://localhost:8083). Empty = SDK default (prod).
+        "endpoint": (
+            os.environ.get("MAXIMEM_ENDPOINT")
+            or os.environ.get("MAXIMEM_API_URL")
+            or ""
+        ),
         "auto_recall": True,
         "auto_capture": True,
         "max_recall_tokens": _DEFAULT_MAX_RECALL_TOKENS,
@@ -194,6 +201,7 @@ class VityMemoryProvider(MemoryProvider):
         self._client = None
         self._client_lock = threading.Lock()
         self._api_key = ""
+        self._endpoint = ""  # optional self-hosted/local Maximem endpoint
         # Tunables (mirror OpenClaw plugin config). Resolved in initialize().
         self._auto_recall = True
         self._auto_capture = True
@@ -235,7 +243,7 @@ class VityMemoryProvider(MemoryProvider):
                 "secret": True,
                 "required": True,
                 "env_var": "MAXIMEM_API_KEY",
-                "url": "https://maximem.ai/dashboard",
+                "url": "https://app.maximem.ai/api-keys",
             },
         ]
 
@@ -270,6 +278,7 @@ class VityMemoryProvider(MemoryProvider):
         """Initialize Vity client for this session."""
         config = _load_config()
         self._api_key = config.get("api_key", "")
+        self._endpoint = config.get("endpoint", "")
         self._auto_recall = config.get("auto_recall", True)
         self._auto_capture = config.get("auto_capture", True)
         self._max_recall_tokens = config.get("max_recall_tokens", _DEFAULT_MAX_RECALL_TOKENS)
@@ -296,7 +305,10 @@ class VityMemoryProvider(MemoryProvider):
                 return self._client
             try:
                 from maximem_vity import VityClient
-                self._client = VityClient(api_key=self._api_key)
+                if self._endpoint:
+                    self._client = VityClient(api_key=self._api_key, endpoint=self._endpoint)
+                else:
+                    self._client = VityClient(api_key=self._api_key)
                 return self._client
             except ImportError:
                 raise RuntimeError(
@@ -503,6 +515,24 @@ class VityMemoryProvider(MemoryProvider):
                     return tool_error("Missing required parameter: query")
                 top_k = min(int(args.get("top_k", 10)), 50)
                 try:
+                    # Use search() for specific-memory retrieval. The recall()
+                    # endpoint returns a synthesized profile that reliably MISSES
+                    # individual stored items (e.g. "what did I read about X"),
+                    # whereas search() does true semantic retrieval over the
+                    # stored memories. Dedupe near-identical hits the backend
+                    # sometimes returns.
+                    results = client.search(query=query, top_k=top_k)
+                    seen = set()
+                    memories = []
+                    for r in results:
+                        content = (r.get("content") or "").strip()
+                        if content and content not in seen:
+                            seen.add(content)
+                            memories.append(content)
+                    if memories:
+                        self._vity_retrieved = True
+                        return json.dumps({"result": memories})
+                    # Fall back to the recall/profile context if search is empty.
                     context = client.recall(
                         current_prompt=query,
                         max_tokens=top_k * 100,

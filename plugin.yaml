@@ -7,13 +7,13 @@ description: "Vity by Maximem AI — cross-session semantic memory with profile-
 # 0.2.0+ is required: it fixes recall()/search() to read the backend's
 # `sources` array (0.1.0 dropped retrieved memories when `context` was empty).
 pip_dependencies:
-  - maximem-vity-sdk>=0.2.0,<1
+  - maximem-vity-sdk>=0.2.1,<1
 
 # Prompted for during `hermes plugins install` (saved to ~/.hermes/.env).
 requires_env:
   - name: MAXIMEM_API_KEY
     description: "Maximem API key (starts with mx_)"
-    url: "https://maximem.ai/dashboard"
+    url: "https://app.maximem.ai/api-keys"
     secret: true
 
 hooks:
