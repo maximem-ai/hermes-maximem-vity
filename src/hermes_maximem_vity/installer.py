@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import os
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -44,6 +45,27 @@ def _target_dir() -> Path:
     return _hermes_home() / "plugins" / PLUGIN_NAME
 
 
+def _activate_provider() -> bool:
+    """Set ``memory.provider = vity`` deterministically via the hermes CLI.
+
+    The interactive ``hermes memory setup`` wizard is fragile (buffered/pasted
+    input can silently drop the selection, leaving the provider at "none"), so
+    we activate non-interactively here. Best-effort: returns False if the
+    ``hermes`` CLI isn't on PATH or the call fails.
+    """
+    hermes = shutil.which("hermes")
+    if not hermes:
+        return False
+    try:
+        subprocess.run(
+            [hermes, "config", "set", "memory.provider", "vity"],
+            check=True, capture_output=True, timeout=60,
+        )
+        return True
+    except Exception:
+        return False
+
+
 def cmd_install(force: bool = False) -> int:
     payload = _payload_dir()
     if not payload.is_dir():
@@ -68,11 +90,22 @@ def cmd_install(force: bool = False) -> int:
         shutil.copy2(example, config)
 
     print(f"✓ Vity plugin installed to {target} ({copied} files)")
+
+    # Activate non-interactively (avoids the fragile `hermes memory setup` wizard).
+    activated = _activate_provider()
+    if activated:
+        print("✓ Activated: memory.provider = vity")
+
     print("\nNext steps:")
     print("  1. Set your key:   echo 'MAXIMEM_API_KEY=mx_...' >> ~/.hermes/.env")
-    print("  2. Activate:       hermes memory setup vity")
-    print("  3. Verify:         hermes vity status")
+    if not activated:
+        print("  2. Activate:       hermes config set memory.provider vity")
+        print("  3. Verify:         hermes memory status   (vity should be ← active)")
+    else:
+        print("  2. Verify:         hermes memory status   (vity should be ← active)")
     print("\nGet an API key at https://app.maximem.ai/api-keys")
+    print("Note: use `hermes config set memory.provider vity` to (re)activate —")
+    print("      the interactive `hermes memory setup` wizard can drop the selection.")
     return 0
 
 

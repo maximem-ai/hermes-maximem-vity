@@ -13,19 +13,19 @@ Vity gives the agent a persistent memory graph (facts, preferences, emotions, ep
 
 ```bash
 pip install hermes-maximem-vity
-hermes-maximem-vity install
-hermes memory setup vity
+hermes-maximem-vity install                    # copies plugin in + activates it
+echo 'MAXIMEM_API_KEY=mx_...' >> ~/.hermes/.env # your key
 ```
 
 That's it:
 1. **`pip install hermes-maximem-vity`** — installs the plugin and its `maximem-vity-sdk` dependency.
-2. **`hermes-maximem-vity install`** — copies the provider into `~/.hermes/plugins/vity/`, where Hermes auto-discovers it. *(One-time step: Hermes discovers plugins from that directory, and pip installs to site-packages — this command bridges the two.)*
-3. **`hermes memory setup vity`** — prompts for your API key and sets `memory.provider: vity`.
+2. **`hermes-maximem-vity install`** — copies the provider into `~/.hermes/plugins/vity/` (where Hermes auto-discovers it) **and sets `memory.provider: vity`** for you.
+3. **Add your API key** to `~/.hermes/.env`.
 
-Set your API key (if you skip the prompt):
-```bash
-echo 'MAXIMEM_API_KEY=mx_...' >> ~/.hermes/.env
-```
+> **Don't use the interactive `hermes memory setup` wizard to activate** — pasted/buffered terminal input can silently drop the selection, leaving the provider at "none". `hermes-maximem-vity install` activates it deterministically. If you ever need to re-activate manually, run:
+> ```bash
+> hermes config set memory.provider vity
+> ```
 
 Get an API key at [app.maximem.ai/api-keys](https://app.maximem.ai/api-keys) (starts with `mx_`).
 
