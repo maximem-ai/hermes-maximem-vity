@@ -4,14 +4,13 @@ Cross-session semantic memory with profile-based recall, a memory graph
 (facts, preferences, emotions, episodes, knowledge, profile), and low-latency
 context injection via the Maximem REST API (the ``maximem-vity-sdk`` client).
 
-This is a STANDALONE plugin — install it into ``~/.hermes/plugins/vity/`` and
-activate it with ``hermes memory setup vity``. It is not bundled with the core
-hermes-agent repo (see that repo's CONTRIBUTING.md, "Memory Providers: Ship as
-a Standalone Plugin").
+This is a standalone plugin — it is installed into ``~/.hermes/plugins/vity/``
+and is not bundled with the core hermes-agent repo (see that repo's
+CONTRIBUTING.md, "Memory Providers: Ship as a Standalone Plugin").
 
-Design mirrors Maximem's official OpenClaw plugin (@maximem/memory-plugin):
-  before_agent_start -> recall   ==> initialize() warm-up + prefetch()
-  agent_end          -> capture  ==> sync_turn()
+Lifecycle:
+  initialize() + prefetch()  -> recall relevant memories before each turn
+  sync_turn()                -> capture the exchange after each turn
 
 Config (env var, recommended):
   MAXIMEM_API_KEY  — Maximem API key (required, starts with mx_)
@@ -36,7 +35,7 @@ from tools.registry import tool_error
 
 logger = logging.getLogger(__name__)
 
-# Defaults mirror the OpenClaw plugin's config surface.
+# Default tunables.
 _DEFAULT_MAX_RECALL_TOKENS = 1000
 _DEFAULT_MIN_PROMPT_LENGTH = 5
 
@@ -140,13 +139,13 @@ def _as_bool(value: Any, default: bool) -> bool:
 def _load_config() -> dict:
     """Load Vity config from env vars + $HERMES_HOME/vity.json overrides.
 
-    The API key is secret (env var only). The non-secret tunables mirror the
-    OpenClaw plugin's config block and may live in vity.json.
+    The API key is secret (env var only). Non-secret tunables may live in
+    vity.json.
     """
     from hermes_constants import get_hermes_home
 
     config: Dict[str, Any] = {
-        # MAXIMEM_API_KEY is the canonical env var (matches the official npm plugin)
+        # MAXIMEM_API_KEY is the canonical env var.
         "api_key": (
             os.environ.get("MAXIMEM_API_KEY")
             or os.environ.get("VITY_API_KEY")  # backward compat
@@ -202,7 +201,7 @@ class VityMemoryProvider(MemoryProvider):
         self._client_lock = threading.Lock()
         self._api_key = ""
         self._endpoint = ""  # optional self-hosted/local Maximem endpoint
-        # Tunables (mirror OpenClaw plugin config). Resolved in initialize().
+        # Tunables. Resolved in initialize().
         self._auto_recall = True
         self._auto_capture = True
         self._max_recall_tokens = _DEFAULT_MAX_RECALL_TOKENS
@@ -289,7 +288,7 @@ class VityMemoryProvider(MemoryProvider):
             session_id, self._auto_recall, self._auto_capture,
         )
 
-        # Mirror OpenClaw's before_agent_start: immediately warm the recall cache
+        # Immediately warm the recall cache on session start
         # with a broad profile query so the first user message has full context.
         self._cold_start = True
         if self._auto_recall:
@@ -358,8 +357,7 @@ class VityMemoryProvider(MemoryProvider):
         """Return pre-warmed Vity context.
 
         On cold start (first turn of a session), waits for the warm-up recall
-        triggered in initialize(). Mirrors OpenClaw's before_agent_start hook —
-        memory is always injected before turn 1.
+        triggered in initialize(), so memory is injected before the first turn.
         """
         import time as _time
         _t0 = _time.perf_counter()
@@ -367,7 +365,7 @@ class VityMemoryProvider(MemoryProvider):
         if not self._auto_recall:
             return ""
 
-        # Skip recall for trivially short prompts (matches OpenClaw minPromptLength).
+        # Skip recall for trivially short prompts (min_prompt_length).
         if len(query.strip()) < self._min_prompt_length and not self._cold_start:
             return ""
 
@@ -461,14 +459,14 @@ class VityMemoryProvider(MemoryProvider):
         self._sync_thread = threading.Thread(target=_sync, daemon=True, name="vity-sync")
         self._sync_thread.start()
 
-    # -- Built-in memory mirroring (OpenClaw /remember parity) ---------------
+    # -- Built-in memory mirroring -------------------------------------------
 
     def on_memory_write(self, action, target, content, metadata=None):
         """Mirror Hermes' built-in memory writes into Vity.
 
-        Gives parity with the OpenClaw plugin's /remember: when the user (or
-        agent) writes to Hermes' built-in memory, the same fact is stored in
-        Vity so it participates in semantic recall. Only mirrors 'add'/'replace'.
+        When the user (or agent) writes to Hermes' built-in memory, the same
+        fact is stored in Vity so it participates in semantic recall. Only
+        mirrors 'add'/'replace'.
         """
         if not self._auto_capture or action not in {"add", "replace"} or not content:
             return

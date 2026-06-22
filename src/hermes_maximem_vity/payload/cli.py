@@ -1,7 +1,6 @@
 """``hermes vity`` CLI subcommands — terminal memory management.
 
-This is the Hermes analog of ``openclaw maximem ...`` from Maximem's OpenClaw
-plugin. It is auto-wired by the host's ``discover_plugin_cli_commands()`` when
+Auto-wired by the host's ``discover_plugin_cli_commands()`` when
 ``memory.provider`` is set to ``vity``:
 
   - ``register_cli(subparser)`` builds the argparse tree
