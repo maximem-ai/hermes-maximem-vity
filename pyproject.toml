@@ -9,7 +9,7 @@ description = "Vity (Maximem AI) memory provider plugin for Hermes Agent"
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.10"
-authors = [{ name = "Maximem AI", email = "hello@maximem.ai" }]
+authors = [{ name = "Maximem AI", email = "gaurav@maximem.ai" }]
 keywords = ["hermes", "hermes-agent", "memory", "vity", "maximem", "llm-memory", "semantic-memory"]
 dependencies = [
     "maximem-vity-sdk>=0.2.1,<1",
