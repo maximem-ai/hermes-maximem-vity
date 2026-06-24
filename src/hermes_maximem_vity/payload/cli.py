@@ -60,12 +60,22 @@ def _load_config() -> dict:
     return cfg
 
 
+def _sdk_available() -> bool:
+    """True if the Maximem SDK is importable by THIS interpreter (Hermes')."""
+    try:
+        import maximem_vity  # noqa: F401
+        return True
+    except Exception:
+        return False
+
+
 def _make_client():
     """Build a VityClient from the active config, or exit with a message."""
     try:
         from maximem_vity import VityClient
     except ImportError:
-        print("maximem-vity-sdk not installed. Run: pip install maximem-vity-sdk")
+        print("maximem-vity-sdk not installed in Hermes' environment.")
+        print("Fix: hermes-maximem-vity install")
         sys.exit(1)
 
     cfg = _load_config()
@@ -80,26 +90,57 @@ def _make_client():
     return VityClient(api_key=api_key)
 
 
+def _row(label: str, value: str) -> str:
+    """One aligned ``label: value`` status row (longest label is 17 chars)."""
+    return f"  {label + ':':<20}{value}"
+
+
 def _cmd_status() -> None:
     cfg = _load_config()
     has_key = bool(cfg.get("api_key"))
+    sdk_ok = _sdk_available()
+
     print("Vity (Maximem AI) memory")
-    print(f"  API key:        {'set ✓' if has_key else 'NOT set ✗'}")
-    print(f"  endpoint:       {cfg.get('endpoint') or 'default (prod)'}")
-    print(f"  auto_recall:    {cfg.get('auto_recall')}")
-    print(f"  auto_capture:   {cfg.get('auto_capture')}")
-    print(f"  max_recall_tokens: {cfg.get('max_recall_tokens')}")
-    print(f"  min_prompt_length: {cfg.get('min_prompt_length')}")
-    if not has_key:
+    print(_row("API key", "set ✓" if has_key else "not set ✗"))
+    print(_row("SDK", "installed ✓" if sdk_ok else "not installed ✗"))
+    print(_row("endpoint", cfg.get("endpoint") or "default (prod)"))
+    print(_row("auto_recall", str(cfg.get("auto_recall"))))
+    print(_row("auto_capture", str(cfg.get("auto_capture"))))
+    print(_row("max_recall_tokens", str(cfg.get("max_recall_tokens"))))
+    print(_row("min_prompt_length", str(cfg.get("min_prompt_length"))))
+
+    # Surface the two blockers cleanly instead of failing mid-connection.
+    if not sdk_ok:
+        print("\n  ⚠ SDK missing — run:  hermes-maximem-vity install")
         return
+    if not has_key:
+        print("\n  ⚠ API key missing — run:  hermes-maximem-vity install")
+        return
+
     # Live connection check.
     try:
         client = _make_client()
         client.search(query="connection check", top_k=1)
-        print("  connection:     ok ✓")
+        print(_row("connection", "ok ✓"))
         client.close()
     except Exception as e:
-        print(f"  connection:     failed ✗ ({e})")
+        print(_row("connection", f"failed ✗ ({e})"))
+
+
+def _is_placeholder(result: dict) -> bool:
+    """True for the backend's synthesized non-memory results.
+
+    The API sometimes returns a profile-summary blob (``type: "context"``) or an
+    "empty profile" sentinel (``type: null`` with a fixed message) instead of
+    discrete stored memories — e.g. for short/low-signal queries. These are not
+    real hits, so the human-readable ``search`` view treats them as "no results".
+    Real memories can also carry ``type: null``, so we match the sentinel by its
+    content, not by type alone.
+    """
+    if result.get("type") == "context":
+        return True
+    content = (result.get("content") or "").lower()
+    return "memory profile is empty" in content
 
 
 def _cmd_search(query: str, limit: int, as_json: bool) -> None:
@@ -118,6 +159,11 @@ def _cmd_search(query: str, limit: int, as_json: bool) -> None:
     seen = set()
     shown = 0
     for r in results:
+        # Skip the backend's synthesized placeholders (profile-summary blob /
+        # "empty profile" sentinel) — not discrete stored memories.
+        # `--json` still shows everything for power users.
+        if _is_placeholder(r):
+            continue
         content = (r.get("content") or "").strip()
         if not content or content in seen:
             continue
@@ -146,10 +192,14 @@ def _cmd_forget(query: str, confirm: bool) -> None:
     finally:
         client.close()
     count = result.get("count", 0)
+    noun = "memory" if count == 1 else "memories"
     if not confirm:
-        print(f"Would delete {count} memories. Re-run with --yes to confirm.")
+        if count == 0:
+            print("Nothing matches — no memories to delete.")
+        else:
+            print(f"Would delete {count} {noun}. Re-run with --yes to confirm.")
     else:
-        print(f"Deleted {count} memories.")
+        print(f"Deleted {count} {noun}.")
 
 
 def vity_command(args) -> None:

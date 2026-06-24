@@ -41,13 +41,15 @@ hermes-maximem-vity install
 ```
 
 You don't need to match Python versions — the `maximem-vity-sdk` dependency is installed into Hermes' own environment automatically.
+
 </details>
 
 ### Verify
 
 ```bash
-hermes memory status     # shows: vity ← active
-hermes vity status       # API key set ✓, connection ok ✓
+hermes-maximem-vity status   # plugin installed ✓, SDK available to Hermes ✓
+hermes memory status         # shows: vity ← active
+hermes vity status           # API key set ✓, SDK installed ✓, connection ok ✓
 ```
 
 ### Update / remove
@@ -57,26 +59,37 @@ pip install -U hermes-maximem-vity && hermes-maximem-vity install --force   # up
 hermes-maximem-vity uninstall                                               # remove
 ```
 
+### Troubleshooting
+
+**`hermes vity status` still says `maximem-vity-sdk not installed` — even after `pip install`?**
+
+Hermes runs inside its **own isolated environment**, which is usually *not* the Python that ran `pip install` (Anaconda or system Python). The SDK must live in Hermes' environment, and `hermes-maximem-vity install` puts it there for you — just re-run it:
+
+```bash
+hermes-maximem-vity install
+hermes-maximem-vity status     # confirm: SDK available to Hermes ✓
+```
+
 ---
 
 ## Configuration
 
 **API key** (secret — stored in `~/.hermes/.env`):
 
-| Env var | Required | Description |
-|---|---|---|
-| `MAXIMEM_API_KEY` | ✅ | Your Maximem API key (`mx_…`). `VITY_API_KEY` is also accepted. |
+| Env var             | Required | Description                                                          |
+| ------------------- | -------- | -------------------------------------------------------------------- |
+| `MAXIMEM_API_KEY` | ✅       | Your Maximem API key (`mx_…`). `VITY_API_KEY` is also accepted. |
 
 > The API key owns the memory space — use a separate key per account that needs isolated memories.
 
 **Tunables** (optional, non-secret — `$HERMES_HOME/vity.json`, created on install):
 
-| Key | Default | Description |
-|---|---|---|
-| `auto_recall` | `true` | Inject relevant memories before each turn |
-| `auto_capture` | `true` | Capture the conversation after each turn |
-| `max_recall_tokens` | `1000` | Token budget for recalled context |
-| `min_prompt_length` | `5` | Skip recall for very short prompts |
+| Key                   | Default  | Description                               |
+| --------------------- | -------- | ----------------------------------------- |
+| `auto_recall`       | `true` | Inject relevant memories before each turn |
+| `auto_capture`      | `true` | Capture the conversation after each turn  |
+| `max_recall_tokens` | `1000` | Token budget for recalled context         |
+| `min_prompt_length` | `5`    | Skip recall for very short prompts        |
 
 **Self-hosted backend** (optional): set `MAXIMEM_ENDPOINT` (or `endpoint` in `vity.json`) to point at a non-default Maximem API URL.
 
@@ -96,12 +109,12 @@ All network calls run on background threads, so the agent loop never blocks.
 
 The plugin exposes four tools to the agent:
 
-| Tool | Parameters | Purpose |
-|---|---|---|
-| `vity_recall` | `query` (required), `top_k` (default 10, max 50) | Semantic search of stored memories. |
-| `vity_profile` | — | Retrieve the user's full stored memory profile. |
-| `vity_store` | `content` (required), `memory_type` (`fact`/`preference`/`emotion`/`episode`/`knowledge`/`profile`) | Save a new memory. |
-| `vity_forget` | `query`, `dry_run` (default `true`) | Delete matching memories (previews first). |
+| Tool             | Parameters                                                                                                          | Purpose                                         |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------- |
+| `vity_recall`  | `query` (required), `top_k` (default 10, max 50)                                                                | Semantic search of stored memories.             |
+| `vity_profile` | —                                                                                                                  | Retrieve the user's full stored memory profile. |
+| `vity_store`   | `content` (required), `memory_type` (`fact`/`preference`/`emotion`/`episode`/`knowledge`/`profile`) | Save a new memory.                              |
+| `vity_forget`  | `query`, `dry_run` (default `true`)                                                                           | Delete matching memories (previews first).      |
 
 In chat, this is transparent: ask the agent to "remember that …" and it calls `vity_store`; ask "what do you know about …" and it calls `vity_recall`. No special commands are required.
 
@@ -135,14 +148,14 @@ Tests stub the Hermes host modules (`agent.memory_provider`, `tools.registry`, `
 
 ## Layout
 
-| Path | Purpose |
-|---|---|
-| `src/hermes_maximem_vity/installer.py` | The `hermes-maximem-vity` console command (`install` / `uninstall` / `status`). |
-| `src/hermes_maximem_vity/payload/provider.py` | `VityMemoryProvider` + `register()` — copied to `~/.hermes/plugins/vity/__init__.py` on install. |
-| `src/hermes_maximem_vity/payload/cli.py` | The `hermes vity …` subcommands. |
-| `src/hermes_maximem_vity/payload/plugin.yaml` | Plugin manifest (dependencies, required env). |
-| `src/hermes_maximem_vity/payload/vity.json.example` | Tunables template (seeded to `vity.json` on install). |
-| `tests/` | Unit tests + host-module stubs. |
+| Path                                                  | Purpose                                                                                                 |
+| ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `src/hermes_maximem_vity/installer.py`              | The`hermes-maximem-vity` console command (`install` / `uninstall` / `status`).                  |
+| `src/hermes_maximem_vity/payload/provider.py`       | `VityMemoryProvider` + `register()` — copied to `~/.hermes/plugins/vity/__init__.py` on install. |
+| `src/hermes_maximem_vity/payload/cli.py`            | The`hermes vity …` subcommands.                                                                      |
+| `src/hermes_maximem_vity/payload/plugin.yaml`       | Plugin manifest (dependencies, required env).                                                           |
+| `src/hermes_maximem_vity/payload/vity.json.example` | Tunables template (seeded to`vity.json` on install).                                                  |
+| `tests/`                                            | Unit tests + host-module stubs.                                                                         |
 
 ## License
 

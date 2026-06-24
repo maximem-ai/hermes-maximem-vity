@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -113,6 +114,85 @@ def _ensure_api_key(api_key: str | None) -> bool:
     return False
 
 
+def _hermes_python() -> str | None:
+    """Resolve the Python interpreter that the ``hermes`` runtime actually uses.
+
+    The Vity plugin runs *inside* the Hermes process, which normally lives in
+    its own isolated virtualenv (e.g. ``~/.hermes/hermes-agent/venv``) — NOT
+    the interpreter that ran ``pip install hermes-maximem-vity`` (often Anaconda
+    base or the system Python). The SDK must be importable by *Hermes'*
+    interpreter, so we have to find it. Returns the interpreter path, or None.
+    """
+    candidates: list[Path] = []
+
+    # 1) Standard Hermes layout: a dedicated venv under HERMES_HOME.
+    candidates.append(_hermes_home() / "hermes-agent" / "venv" / "bin" / "python")
+
+    # 2) Derive it from the `hermes` launcher on PATH.
+    hermes = shutil.which("hermes")
+    if hermes:
+        launcher = Path(hermes)
+        try:
+            text = launcher.read_text(errors="replace")
+        except Exception:
+            text = ""
+        lines = text.splitlines()
+        # 2a) bash wrapper: `exec ".../venv/bin/hermes" "$@"` -> sibling python.
+        m = re.search(r'([^\s"\']+)/bin/hermes\b', text)
+        if m:
+            candidates.append(Path(m.group(1)) / "bin" / "python")
+        # 2b) Python console script: the shebang IS the interpreter.
+        if lines and lines[0].startswith("#!") and "python" in lines[0]:
+            candidates.append(Path(lines[0][2:].strip().split()[0]))
+        # 2c) Last resort: a python next to the launcher.
+        candidates.append(launcher.parent / "python")
+
+    for c in candidates:
+        try:
+            if c.exists():
+                return str(c)
+        except OSError:
+            continue
+    return None
+
+
+def _install_sdk_into_hermes() -> bool:
+    """Install ``maximem-vity-sdk`` into the interpreter that runs Hermes.
+
+    This is the step a plain ``pip install`` cannot do: the SDK is a dependency
+    of *this* package, so it lands in whatever Python ran pip — but Hermes runs
+    elsewhere. We target Hermes' own interpreter, bootstrapping pip via
+    ``ensurepip`` if the venv was created without it. Best-effort: returns False
+    (with a clear manual fallback printed by the caller) if it can't be done.
+    """
+    py = _hermes_python()
+    if not py:
+        return False
+
+    # Already importable by Hermes? Nothing to do.
+    if subprocess.run([py, "-c", "import maximem_vity"], capture_output=True).returncode == 0:
+        return True
+
+    print("  installing maximem-vity-sdk into Hermes' environment (one-time)…")
+
+    # Make sure pip exists in that interpreter (venvs are often built without it).
+    if subprocess.run([py, "-m", "pip", "--version"], capture_output=True).returncode != 0:
+        subprocess.run([py, "-m", "ensurepip", "--upgrade"], capture_output=True, timeout=180)
+
+    try:
+        proc = subprocess.run(
+            [py, "-m", "pip", "install", "maximem-vity-sdk>=0.2.1,<1"],
+            capture_output=True, timeout=300,
+        )
+    except Exception:
+        return False
+    if proc.returncode != 0:
+        return False
+
+    # Verify the import really works now (not just that pip exited 0).
+    return subprocess.run([py, "-c", "import maximem_vity"], capture_output=True).returncode == 0
+
+
 def _activate_provider() -> bool:
     """Set ``memory.provider = vity`` deterministically via the hermes CLI.
 
@@ -156,22 +236,35 @@ def cmd_install(force: bool = False, api_key: str | None = None) -> int:
         shutil.copy2(example, config)
     print(f"✓ Plugin files installed to {target} ({copied} files)")
 
-    # 1) API key (flag > already-set > prompt) — written deduped to ~/.hermes/.env
+    # 1) Install the SDK into Hermes' OWN interpreter. A plain `pip install`
+    #    put the SDK in whatever Python ran it (often Anaconda/system), but
+    #    Hermes runs in its own venv and imports `maximem_vity` there — without
+    #    this step it reports "maximem-vity-sdk not installed" despite pip.
+    sdk_ok = _install_sdk_into_hermes()
+    if sdk_ok:
+        print("✓ SDK available to Hermes (maximem-vity-sdk)")
+
+    # 2) API key (flag > already-set > prompt) — written deduped to ~/.hermes/.env
     key_ok = _ensure_api_key(api_key)
 
-    # 2) Activate non-interactively (avoids the fragile `hermes memory setup` wizard)
+    # 3) Activate non-interactively (avoids the fragile `hermes memory setup` wizard)
     activated = _activate_provider()
     if activated:
         print("✓ Activated: memory.provider = vity")
 
-    # 3) Clear, honest summary — no guesswork for the user
+    # 4) Clear, honest summary — no guesswork for the user
     print("\n" + "─" * 52)
-    if key_ok and activated:
+    if key_ok and activated and sdk_ok:
         print("✅ All set! Vity memory is active.")
         print("   Start Hermes:   hermes")
         print("   Check it:       hermes vity status")
     else:
         print("Almost done — finish these:")
+        if not sdk_ok:
+            hpy = _hermes_python()
+            target_py = hpy or "<your hermes venv python>"
+            print("  • Install the SDK into Hermes' interpreter:")
+            print(f"      {target_py} -m pip install 'maximem-vity-sdk>=0.2.1,<1'")
         if not key_ok:
             print("  • Add your API key:")
             print("      echo 'MAXIMEM_API_KEY=mx_...' >> ~/.hermes/.env")
@@ -179,10 +272,9 @@ def cmd_install(force: bool = False, api_key: str | None = None) -> int:
         if not activated:
             print("  • Activate the provider (hermes wasn't on PATH):")
             print("      hermes config set memory.provider vity")
+            print("      (not the interactive `hermes memory setup` — it can drop the selection)")
         print("  Then:  hermes vity status")
     print("─" * 52)
-    print("Tip: do NOT use the interactive `hermes memory setup` to activate —")
-    print("     `hermes config set memory.provider vity` is the reliable way.")
     return 0
 
 
@@ -202,6 +294,16 @@ def cmd_status() -> int:
     print(f"Vity plugin: {'installed ✓' if installed else 'not installed ✗'}")
     print(f"  location: {target}")
     print(f"  payload:  {_payload_dir()}")
+
+    # The exact thing that broke before: can Hermes' interpreter import the SDK?
+    py = _hermes_python()
+    if not py:
+        print("  SDK:      hermes interpreter not found (run `hermes` once?)")
+    else:
+        importable = subprocess.run(
+            [py, "-c", "import maximem_vity"], capture_output=True
+        ).returncode == 0
+        print(f"  SDK:      {'available to Hermes ✓' if importable else 'NOT importable by Hermes ✗ — run: hermes-maximem-vity install'}")
     return 0
 
 
