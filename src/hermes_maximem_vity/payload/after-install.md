@@ -1,31 +1,42 @@
 # Vity Memory installed 🎉
 
-Two steps to activate Vity as your Hermes memory provider:
+`hermes-maximem-vity install` already did everything for you:
 
-1. **Set your Maximem API key** (skip if you entered it during install):
+- ✅ Copied the plugin into `~/.hermes/plugins/vity/`
+- ✅ Installed `maximem-vity-sdk` into Hermes' **own** environment
+- ✅ Activated the provider (`memory.provider: vity`)
 
-   ```bash
-   echo 'MAXIMEM_API_KEY=mx_...' >> ~/.hermes/.env
-   ```
-
-2. **Activate Vity** (installs the SDK and sets `memory.provider`):
-
-   ```bash
-   hermes memory setup vity
-   ```
-
-Then restart the gateway if you run one:
+If the installer printed **✅ All set!**, just start the agent:
 
 ```bash
-hermes gateway restart
+hermes
 ```
+
+## If your API key wasn't set
+
+The installer prompts for it (or pass `--api-key mx_…`). To add it now:
+
+```bash
+echo 'MAXIMEM_API_KEY=mx_...' >> ~/.hermes/.env
+```
+
+Get a key at https://app.maximem.ai/api-keys
+
+Running a gateway? Restart it to pick up the change: `hermes gateway restart`.
 
 ## Verify
 
 ```bash
 hermes memory status     # should show vity active
-hermes vity status       # config + live connection check
+hermes vity status       # config + live connection check (connection: ok ✓)
 hermes vity search "anything"
 ```
 
-Get an API key at https://app.maximem.ai/api-keys
+## Re-activate (if ever needed)
+
+```bash
+hermes config set memory.provider vity
+```
+
+Avoid the interactive `hermes memory setup` wizard — buffered/pasted terminal
+input can silently drop the selection and leave the provider unset.
