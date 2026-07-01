@@ -2,5 +2,6 @@
   "auto_recall": true,
   "auto_capture": true,
   "max_recall_tokens": 1000,
-  "min_prompt_length": 5
+  "min_prompt_length": 5,
+  "recall_timeout": 6.0
 }

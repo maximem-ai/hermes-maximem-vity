@@ -1,7 +1,7 @@
-"""Tests for the ``hermes vity`` CLI rendering — clean, predictable output.
+"""Tests for the ``hermes maximem_vity`` CLI rendering — clean, predictable output.
 
 The CLI module (payload/cli.py) is loaded by file path: at runtime it lives in
-``~/.hermes/plugins/vity/cli.py`` and only imports the host lazily, so it loads
+``~/.hermes/plugins/maximem_vity/cli.py`` and only imports the host lazily, so it loads
 standalone without the Hermes stubs the provider needs.
 """
 

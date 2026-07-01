@@ -3,10 +3,10 @@
 A plain ``pip install`` lands this package in site-packages, but Hermes
 discovers memory providers from ``$HERMES_HOME/plugins/<name>/``. This command
 bridges the gap: it copies the bundled plugin payload into
-``~/.hermes/plugins/vity/`` so Hermes picks it up.
+``~/.hermes/plugins/maximem_vity/`` so Hermes picks it up.
 
 Usage:
-    hermes-maximem-vity install      # copy plugin into ~/.hermes/plugins/vity/
+    hermes-maximem-vity install      # copy plugin into ~/.hermes/plugins/maximem_vity/
     hermes-maximem-vity uninstall    # remove it
     hermes-maximem-vity status       # show install location + state
 """
@@ -21,12 +21,16 @@ import subprocess
 import sys
 from pathlib import Path
 
-PLUGIN_NAME = "vity"
+PLUGIN_NAME = "maximem_vity"
 
-# payload filename -> installed filename in ~/.hermes/plugins/vity/
+# Pre-rename folder name. Removed on install so Hermes Desktop's Memory Provider
+# list shows only "Maximem Vity", not a stale "Vity" alongside it.
+_LEGACY_PLUGIN_NAME = "vity"
+
+# payload filename -> installed filename in ~/.hermes/plugins/maximem_vity/
 _FILES = {
     "provider.py": "__init__.py",   # the MemoryProvider Hermes loads
-    "cli.py": "cli.py",             # the `hermes vity` subcommands
+    "cli.py": "cli.py",             # the `hermes maximem_vity` subcommands
     "plugin.yaml": "plugin.yaml",   # manifest (deps, required env)
     "vity.json.example": "vity.json.example",
     "after-install.md": "after-install.md",
@@ -99,7 +103,7 @@ def _ensure_api_key(api_key: str | None) -> bool:
         print("✓ Saved MAXIMEM_API_KEY to ~/.hermes/.env")
         return True
     if _key_already_set():
-        print("✓ MAXIMEM_API_KEY already configured")
+        print("✓ MAXIMEM_API_KEY already configured (pass --api-key mx_… to change it)")
         return True
     # Prompt only on a real terminal — never hang on piped/buffered input.
     if sys.stdin.isatty() and sys.stdout.isatty():
@@ -194,7 +198,7 @@ def _install_sdk_into_hermes() -> bool:
 
 
 def _activate_provider() -> bool:
-    """Set ``memory.provider = vity`` deterministically via the hermes CLI.
+    """Set ``memory.provider = maximem_vity`` deterministically via the hermes CLI.
 
     The interactive ``hermes memory setup`` wizard is fragile (buffered/pasted
     input can silently drop the selection, leaving the provider at "none"), so
@@ -206,7 +210,7 @@ def _activate_provider() -> bool:
         return False
     try:
         subprocess.run(
-            [hermes, "config", "set", "memory.provider", "vity"],
+            [hermes, "config", "set", "memory.provider", PLUGIN_NAME],
             check=True, capture_output=True, timeout=60,
         )
         return True
@@ -221,6 +225,16 @@ def cmd_install(force: bool = False, api_key: str | None = None) -> int:
         return 1
     target = _target_dir()
     target.mkdir(parents=True, exist_ok=True)
+
+    # Migrate away from the pre-rename folder so the Memory Provider list doesn't
+    # show a stale "Vity" next to "Maximem Vity".
+    legacy = _hermes_home() / "plugins" / _LEGACY_PLUGIN_NAME
+    if legacy.exists() and legacy.resolve() != target.resolve():
+        try:
+            shutil.rmtree(legacy)
+            print(f"✓ Removed legacy plugin folder {legacy}")
+        except Exception:
+            print(f"  (note: couldn't remove old {legacy} — delete it manually)")
 
     copied = 0
     for src_name, dst_name in _FILES.items():
@@ -250,14 +264,14 @@ def cmd_install(force: bool = False, api_key: str | None = None) -> int:
     # 3) Activate non-interactively (avoids the fragile `hermes memory setup` wizard)
     activated = _activate_provider()
     if activated:
-        print("✓ Activated: memory.provider = vity")
+        print(f"✓ Activated: memory.provider = {PLUGIN_NAME}")
 
     # 4) Clear, honest summary — no guesswork for the user
     print("\n" + "─" * 52)
     if key_ok and activated and sdk_ok:
         print("✅ All set! Vity memory is active.")
         print("   Start Hermes:   hermes")
-        print("   Check it:       hermes vity status")
+        print("   Check it:       hermes maximem_vity status")
     else:
         print("Almost done — finish these:")
         if not sdk_ok:
@@ -271,9 +285,9 @@ def cmd_install(force: bool = False, api_key: str | None = None) -> int:
             print("      (get one at https://app.maximem.ai/api-keys)")
         if not activated:
             print("  • Activate the provider (hermes wasn't on PATH):")
-            print("      hermes config set memory.provider vity")
+            print(f"      hermes config set memory.provider {PLUGIN_NAME}")
             print("      (not the interactive `hermes memory setup` — it can drop the selection)")
-        print("  Then:  hermes vity status")
+        print("  Then:  hermes maximem_vity status")
     print("─" * 52)
     return 0
 
@@ -317,7 +331,7 @@ def main(argv=None) -> int:
     p_install.add_argument("--force", action="store_true", help="Overwrite an existing install")
     p_install.add_argument("--api-key", metavar="mx_…", default=None,
                            help="Maximem API key — saved to ~/.hermes/.env (deduped)")
-    sub.add_parser("uninstall", help="Remove the plugin from ~/.hermes/plugins/vity/")
+    sub.add_parser("uninstall", help="Remove the plugin from ~/.hermes/plugins/maximem_vity/")
     sub.add_parser("status", help="Show install location and state")
 
     args = parser.parse_args(argv)

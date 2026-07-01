@@ -4,7 +4,7 @@ Cross-session semantic memory with profile-based recall, a memory graph
 (facts, preferences, emotions, episodes, knowledge, profile), and low-latency
 context injection via the Maximem REST API (the ``maximem-vity-sdk`` client).
 
-This is a standalone plugin — it is installed into ``~/.hermes/plugins/vity/``
+This is a standalone plugin — it is installed into ``~/.hermes/plugins/maximem_vity/``
 and is not bundled with the core hermes-agent repo (see that repo's
 CONTRIBUTING.md, "Memory Providers: Ship as a Standalone Plugin").
 
@@ -18,8 +18,9 @@ Config (env var, recommended):
 Config (non-secret tunables, optional) — $HERMES_HOME/vity.json:
   auto_recall        (bool,  default true)   inject memories before each turn
   auto_capture       (bool,  default true)   capture conversation after each turn
-  max_recall_tokens  (int,   default 1000)   token budget for recalled context
+  max_recall_tokens  (int,   default 1000)   size cap for injected recall context
   min_prompt_length  (int,   default 5)      skip recall for trivially short prompts
+  recall_timeout     (float, default 6.0)    max seconds to wait for pre-turn recall
 """
 
 from __future__ import annotations
@@ -38,6 +39,11 @@ logger = logging.getLogger(__name__)
 # Default tunables.
 _DEFAULT_MAX_RECALL_TOKENS = 1000
 _DEFAULT_MIN_PROMPT_LENGTH = 5
+# Short timeout (seconds) for automatic recall. Auto-recall runs on the critical
+# path before every turn, so a slow/unhealthy Maximem endpoint must never block
+# the user — we bound it low and degrade to "no memory this turn". The healthy
+# search endpoint responds in ~2s; capture/store keep the SDK's default timeout.
+_DEFAULT_RECALL_TIMEOUT = 6.0
 
 
 # ---------------------------------------------------------------------------
@@ -162,6 +168,7 @@ def _load_config() -> dict:
         "auto_capture": True,
         "max_recall_tokens": _DEFAULT_MAX_RECALL_TOKENS,
         "min_prompt_length": _DEFAULT_MIN_PROMPT_LENGTH,
+        "recall_timeout": _DEFAULT_RECALL_TIMEOUT,
     }
 
     config_path = get_hermes_home() / "vity.json"
@@ -185,8 +192,28 @@ def _load_config() -> dict:
         config["min_prompt_length"] = int(config.get("min_prompt_length") or _DEFAULT_MIN_PROMPT_LENGTH)
     except (TypeError, ValueError):
         config["min_prompt_length"] = _DEFAULT_MIN_PROMPT_LENGTH
+    try:
+        config["recall_timeout"] = float(config.get("recall_timeout") or _DEFAULT_RECALL_TIMEOUT)
+    except (TypeError, ValueError):
+        config["recall_timeout"] = _DEFAULT_RECALL_TIMEOUT
 
     return config
+
+
+def _is_placeholder(result: dict) -> bool:
+    """True for the backend's synthesized non-memory results.
+
+    ``search()`` sometimes returns a profile-summary blob (``type: "context"``)
+    or an "empty profile" sentinel instead of discrete stored memories — e.g.
+    for short/low-signal queries. These are not real hits, so we drop them
+    before injecting recall context (otherwise a fresh/sparse account injects
+    "memory profile is empty" as if it were a memory). Matches the CLI's
+    ``hermes maximem_vity search`` filtering.
+    """
+    if result.get("type") == "context":
+        return True
+    content = (result.get("content") or "").lower()
+    return "memory profile is empty" in content
 
 
 # ---------------------------------------------------------------------------
@@ -198,6 +225,7 @@ class VityMemoryProvider(MemoryProvider):
 
     def __init__(self):
         self._client = None
+        self._recall_client = None  # short-timeout client for auto-recall
         self._client_lock = threading.Lock()
         self._api_key = ""
         self._endpoint = ""  # optional self-hosted/local Maximem endpoint
@@ -206,12 +234,13 @@ class VityMemoryProvider(MemoryProvider):
         self._auto_capture = True
         self._max_recall_tokens = _DEFAULT_MAX_RECALL_TOKENS
         self._min_prompt_length = _DEFAULT_MIN_PROMPT_LENGTH
-        # Prefetch threading (non-blocking pattern — REQUIRED by Hermes contract)
-        self._prefetch_result = ""
-        self._prefetch_lock = threading.Lock()
+        self._recall_timeout = _DEFAULT_RECALL_TIMEOUT
+        # Background threads (non-blocking pattern — REQUIRED by Hermes contract).
+        # Recall runs synchronously per-turn in prefetch() against the current
+        # message; only capture/sync runs in the background.
         self._prefetch_thread = None
         self._sync_thread = None
-        # Track whether we've done the initial warm-up recall
+        # First-turn flag — exempts the very first prompt from the min-length skip.
         self._cold_start = True
         # Timing: measure Vity API time vs Hermes LLM time
         self._vity_prefetch_ms: float = 0.0  # how long prefetch() waited for Vity
@@ -223,7 +252,9 @@ class VityMemoryProvider(MemoryProvider):
 
     @property
     def name(self) -> str:
-        return "vity"
+        # Provider id — also the plugin folder name and the value shown in the
+        # Hermes Desktop "Memory Provider" dropdown (rendered as "Maximem Vity").
+        return "maximem_vity"
 
     # -- Availability (no network calls!) ------------------------------------
 
@@ -282,38 +313,105 @@ class VityMemoryProvider(MemoryProvider):
         self._auto_capture = config.get("auto_capture", True)
         self._max_recall_tokens = config.get("max_recall_tokens", _DEFAULT_MAX_RECALL_TOKENS)
         self._min_prompt_length = config.get("min_prompt_length", _DEFAULT_MIN_PROMPT_LENGTH)
+        self._recall_timeout = config.get("recall_timeout", _DEFAULT_RECALL_TIMEOUT)
         self._session_id = session_id
         logger.debug(
             "Vity initialized: session=%s auto_recall=%s auto_capture=%s",
             session_id, self._auto_recall, self._auto_capture,
         )
 
-        # Immediately warm the recall cache on session start
-        # with a broad profile query so the first user message has full context.
+        # First turn of the session. prefetch() searches the actual user
+        # message, so there is no separate warm-up query to fire here.
         self._cold_start = True
-        if self._auto_recall:
-            self.queue_prefetch(
-                "user profile background context history preferences facts",
-                session_id=session_id,
-            )
+
+    def _build_client(self, timeout: float | None = None):
+        """Construct a VityClient, optionally with a custom HTTP timeout."""
+        from maximem_vity import VityClient
+        kwargs: Dict[str, Any] = {"api_key": self._api_key}
+        if self._endpoint:
+            kwargs["endpoint"] = self._endpoint
+        if timeout is not None:
+            kwargs["timeout"] = timeout
+        return VityClient(**kwargs)
 
     def _get_client(self):
-        """Thread-safe lazy initialization of the Vity SDK client."""
+        """Thread-safe lazy client for capture/store/tool calls (SDK default timeout)."""
         with self._client_lock:
             if self._client is not None:
                 return self._client
             try:
-                from maximem_vity import VityClient
-                if self._endpoint:
-                    self._client = VityClient(api_key=self._api_key, endpoint=self._endpoint)
-                else:
-                    self._client = VityClient(api_key=self._api_key)
+                self._client = self._build_client()
                 return self._client
             except ImportError:
                 raise RuntimeError(
                     "maximem-vity-sdk not installed. "
                     "Run: pip install maximem-vity-sdk"
                 )
+
+    def _get_recall_client(self):
+        """Thread-safe lazy client for AUTO-RECALL, with a short HTTP timeout.
+
+        Auto-recall runs before every turn; a slow or unhealthy Maximem endpoint
+        must never block the user. This client aborts after ``recall_timeout``
+        seconds so prefetch degrades to "no memory this turn" instead of hanging.
+        Kept separate from the main client so capture/store keep the SDK default.
+        """
+        with self._client_lock:
+            if self._recall_client is not None:
+                return self._recall_client
+            try:
+                self._recall_client = self._build_client(timeout=self._recall_timeout)
+                return self._recall_client
+            except ImportError:
+                raise RuntimeError(
+                    "maximem-vity-sdk not installed. "
+                    "Run: pip install maximem-vity-sdk"
+                )
+
+    # -- Retrieval (shared by auto-recall AND the vity_recall tool) -----------
+
+    @staticmethod
+    def _dedupe_search(client, query: str, top_k: int) -> List[str]:
+        """Semantic search over stored memories → deduped list of contents.
+
+        Uses ``search()`` (true semantic retrieval), drops the backend's
+        synthesized placeholders, and dedupes the near-identical hits it
+        sometimes returns for one memory. This is the retrieval that actually
+        surfaces specific stored items — the same call ``hermes maximem_vity search``
+        makes — as opposed to ``recall()``, whose synthesized profile reliably
+        misses them.
+        """
+        results = client.search(query=query, top_k=top_k) or []
+        seen: set = set()
+        memories: List[str] = []
+        for r in results:
+            if _is_placeholder(r):
+                continue
+            content = (r.get("content") or "").strip()
+            if content and content not in seen:
+                seen.add(content)
+                memories.append(content)
+        return memories
+
+    def _recall_for_injection(self, query: str, top_k: int = 10) -> str:
+        """Memories to inject for auto-recall, or "" — search only, short timeout.
+
+        Deliberately does NOT fall back to ``recall()``: that endpoint returns a
+        synthesized profile that misses specific items AND is the one prone to
+        hanging, so on the pre-turn critical path we use only the fast search
+        endpoint via the short-timeout client. If it's empty or slow, we inject
+        nothing this turn rather than block the user.
+        """
+        memories = self._dedupe_search(self._get_recall_client(), query, top_k)
+        if not memories:
+            return ""
+        text = "\n".join(f"- {m}" for m in memories)
+        # Bound the injected context to ~max_recall_tokens (approx 4 chars/token)
+        # so a large memory set can't crowd out the conversation.
+        budget = max(int(self._max_recall_tokens), 0) * 4
+        if budget and len(text) > budget:
+            text = text[:budget].rstrip()
+        return text
 
     # -- System Prompt Block -------------------------------------------------
 
@@ -329,35 +427,17 @@ class VityMemoryProvider(MemoryProvider):
             "3. Use `vity_forget` only when the user explicitly asks to delete a memory."
         )
 
-    # -- Prefetch (background context injection) -----------------------------
-
-    def queue_prefetch(self, query: str, *, session_id: str = "") -> None:
-        """Pre-warm Vity recall in background after each turn."""
-        if not self._auto_recall:
-            return
-
-        def _run():
-            try:
-                client = self._get_client()
-                context = client.recall(
-                    current_prompt=query,
-                    max_tokens=self._max_recall_tokens,
-                    strategy="hybrid",
-                )
-                if context:
-                    with self._prefetch_lock:
-                        self._prefetch_result = context
-            except Exception as e:
-                logger.debug("Vity prefetch failed: %s", e)
-
-        self._prefetch_thread = threading.Thread(target=_run, daemon=True, name="vity-prefetch")
-        self._prefetch_thread.start()
+    # -- Prefetch (automatic context injection before each turn) -------------
 
     def prefetch(self, query: str, *, session_id: str = "") -> str:
-        """Return pre-warmed Vity context.
+        """Recall memories relevant to THIS message and inject them.
 
-        On cold start (first turn of a session), waits for the warm-up recall
-        triggered in initialize(), so memory is injected before the first turn.
+        Runs a synchronous search against the current user message every turn.
+        We do NOT rely on a background warm-up: the host warms with the
+        *previous* turn's message (a query behind), and ``recall()``'s
+        synthesized profile misses specific stored items — the exact reason
+        automatic recall silently returned nothing on sparse accounts. A live
+        ``search()`` on the current message is what makes recall reliable.
         """
         import time as _time
         _t0 = _time.perf_counter()
@@ -369,26 +449,13 @@ class VityMemoryProvider(MemoryProvider):
         if len(query.strip()) < self._min_prompt_length and not self._cold_start:
             return ""
 
-        wait_secs = 8.0 if self._cold_start else 3.0
-        if self._prefetch_thread and self._prefetch_thread.is_alive():
-            self._prefetch_thread.join(timeout=wait_secs)
-
-        with self._prefetch_lock:
-            result = self._prefetch_result
-            self._prefetch_result = ""
-
-        # Cold-start fallback: blocking recall with the actual query.
-        if not result and self._cold_start:
-            try:
-                client = self._get_client()
-                result = client.recall(
-                    current_prompt=query,
-                    max_tokens=self._max_recall_tokens,
-                    strategy="hybrid",
-                )
-                logger.debug("Vity cold-start blocking recall returned %d chars", len(result or ""))
-            except Exception as e:
-                logger.debug("Vity cold-start recall failed: %s", e)
+        result = ""
+        try:
+            result = self._recall_for_injection(query)
+        except Exception as e:
+            # Slow/unhealthy endpoint (e.g. recall timeout) — degrade to no
+            # memory this turn rather than block the user.
+            logger.debug("Vity prefetch retrieval failed (non-fatal): %s", e)
 
         self._cold_start = False
 
@@ -513,20 +580,7 @@ class VityMemoryProvider(MemoryProvider):
                     return tool_error("Missing required parameter: query")
                 top_k = min(int(args.get("top_k", 10)), 50)
                 try:
-                    # Use search() for specific-memory retrieval. The recall()
-                    # endpoint returns a synthesized profile that reliably MISSES
-                    # individual stored items (e.g. "what did I read about X"),
-                    # whereas search() does true semantic retrieval over the
-                    # stored memories. Dedupe near-identical hits the backend
-                    # sometimes returns.
-                    results = client.search(query=query, top_k=top_k)
-                    seen = set()
-                    memories = []
-                    for r in results:
-                        content = (r.get("content") or "").strip()
-                        if content and content not in seen:
-                            seen.add(content)
-                            memories.append(content)
+                    memories = self._dedupe_search(client, query, top_k)
                     if memories:
                         self._vity_retrieved = True
                         return json.dumps({"result": memories})
@@ -579,12 +633,14 @@ class VityMemoryProvider(MemoryProvider):
             if t and t.is_alive():
                 t.join(timeout=5.0)
         with self._client_lock:
-            if self._client is not None:
-                try:
-                    self._client.close()
-                except Exception:
-                    pass
-                self._client = None
+            for attr in ("_client", "_recall_client"):
+                client = getattr(self, attr)
+                if client is not None:
+                    try:
+                        client.close()
+                    except Exception:
+                        pass
+                    setattr(self, attr, None)
 
 
 # ---------------------------------------------------------------------------
