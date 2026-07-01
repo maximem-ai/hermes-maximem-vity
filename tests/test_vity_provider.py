@@ -203,3 +203,17 @@ def test_prefetch_disabled_returns_empty(vity_module, monkeypatch):
 
     assert provider.prefetch("anything") == ""
     fake_client.search.assert_not_called()
+
+
+def test_prefetch_caps_injected_context_to_max_recall_tokens(vity_module, monkeypatch):
+    # max_recall_tokens bounds the injected size (~4 chars/token) so a big
+    # memory set can't crowd out the conversation.
+    fake_client = MagicMock()
+    fake_client.search.return_value = [{"content": "x" * 500, "score": 0.9}]
+    provider = _provider_with_client(vity_module, monkeypatch, fake_client)
+    provider._max_recall_tokens = 10  # ~40-char budget
+
+    out = provider.prefetch("tell me everything")
+
+    assert provider._vity_retrieved
+    assert out.count("x") <= 40

@@ -1,5 +1,3 @@
-     
-
 # Vity Memory for Hermes Agent
 
 **Vity by Maximem AI** — persistent, cross-session semantic memory for [Hermes Agent](https://github.com/NousResearch/hermes-agent), distributed as a standalone plugin.
@@ -26,6 +24,8 @@ hermes-maximem-vity install
 3. **Activates** the provider (`memory.provider: maximem_vity`).
 
 It prints `✅ All set!` when finished. Start the agent with `hermes`.
+
+> Already had Hermes (or the gateway) running during install? Restart it to load the newly-activated provider — gateway users: `hermes gateway restart`.
 
 **Non-interactive / scripted installs** — pass the key as a flag to skip the prompt:
 
@@ -57,7 +57,7 @@ hermes maximem_vity status           # API key set ✓, SDK installed ✓, conne
 ### Update / remove
 
 ```bash
-pip install -U hermes-maximem-vity && hermes-maximem-vity install --force   # update
+pip install -U hermes-maximem-vity && hermes-maximem-vity install   # update (always overwrites)
 hermes-maximem-vity uninstall                                               # remove
 ```
 
@@ -98,8 +98,9 @@ Or edit `~/.hermes/.env` directly, then restart Hermes (gateway users: `hermes g
 | --------------------- | -------- | ----------------------------------------- |
 | `auto_recall`       | `true` | Inject relevant memories before each turn |
 | `auto_capture`      | `true` | Capture the conversation after each turn  |
-| `max_recall_tokens` | `1000` | Token budget for recalled context         |
+| `max_recall_tokens` | `1000` | Size cap for the injected recall context  |
 | `min_prompt_length` | `5`    | Skip recall for very short prompts        |
+| `recall_timeout`    | `6.0`  | Max seconds to wait for pre-turn recall   |
 
 **Self-hosted backend** (optional): set `MAXIMEM_ENDPOINT` (or `endpoint` in `vity.json`) to point at a non-default Maximem API URL.
 
@@ -107,11 +108,11 @@ Or edit `~/.hermes/.env` directly, then restart Hermes (gateway users: `hermes g
 
 ## How it works
 
-- **Recall before each turn** — relevant memories are fetched in the background and injected as context, so the agent starts each turn already aware of the user.
+- **Recall before each turn** — a semantic search runs against your current message and, if it returns within a short timeout (`recall_timeout`, default 6s), the matches are injected as context; otherwise the turn proceeds with no memory rather than waiting.
 - **Capture after each turn** — the user/assistant exchange is saved to long-term memory.
 - **Memory mirroring** — when Hermes' built-in memory tool records a fact, it is also stored in Vity so it participates in semantic recall.
 
-All network calls run on background threads, so the agent loop never blocks.
+Recall runs synchronously on the pre-turn path but is bounded by `recall_timeout` (default 6s), so a slow or unhealthy backend degrades to no-memory-this-turn instead of hanging. Capture and memory-mirroring writes run on background threads, so they never block the reply.
 
 ---
 
@@ -160,11 +161,11 @@ Tests stub the Hermes host modules (`agent.memory_provider`, `tools.registry`, `
 
 | Path                                                  | Purpose                                                                                                         |
 | ----------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
-| `src/hermes_maximem_vity/installer.py`              | The`hermes-maximem-vity` console command (`install` / `uninstall` / `status`).                          |
+| `src/hermes_maximem_vity/installer.py`              | The `hermes-maximem-vity` console command (`install` / `uninstall` / `status`).                          |
 | `src/hermes_maximem_vity/payload/provider.py`       | `VityMemoryProvider` + `register()` — copied to `~/.hermes/plugins/maximem_vity/__init__.py` on install. |
-| `src/hermes_maximem_vity/payload/cli.py`            | The`hermes maximem_vity …` subcommands.                                                                      |
+| `src/hermes_maximem_vity/payload/cli.py`            | The `hermes maximem_vity …` subcommands.                                                                      |
 | `src/hermes_maximem_vity/payload/plugin.yaml`       | Plugin manifest (dependencies, required env).                                                                   |
-| `src/hermes_maximem_vity/payload/vity.json.example` | Tunables template (seeded to`vity.json` on install).                                                          |
+| `src/hermes_maximem_vity/payload/vity.json.example` | Tunables template (seeded to `vity.json` on install).                                                          |
 | `tests/`                                            | Unit tests + host-module stubs.                                                                                 |
 
 ## License

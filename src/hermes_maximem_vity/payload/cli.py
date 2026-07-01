@@ -46,6 +46,7 @@ def _load_config() -> dict:
         "auto_capture": True,
         "max_recall_tokens": 1000,
         "min_prompt_length": 5,
+        "recall_timeout": 6.0,
     }
     try:
         from hermes_constants import get_hermes_home
@@ -108,6 +109,7 @@ def _cmd_status() -> None:
     print(_row("auto_capture", str(cfg.get("auto_capture"))))
     print(_row("max_recall_tokens", str(cfg.get("max_recall_tokens"))))
     print(_row("min_prompt_length", str(cfg.get("min_prompt_length"))))
+    print(_row("recall_timeout", str(cfg.get("recall_timeout"))))
 
     # Surface the two blockers cleanly instead of failing mid-connection.
     if not sdk_ok:

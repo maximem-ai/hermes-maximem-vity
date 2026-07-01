@@ -18,8 +18,9 @@ Config (env var, recommended):
 Config (non-secret tunables, optional) — $HERMES_HOME/vity.json:
   auto_recall        (bool,  default true)   inject memories before each turn
   auto_capture       (bool,  default true)   capture conversation after each turn
-  max_recall_tokens  (int,   default 1000)   token budget for recalled context
+  max_recall_tokens  (int,   default 1000)   size cap for injected recall context
   min_prompt_length  (int,   default 5)      skip recall for trivially short prompts
+  recall_timeout     (float, default 6.0)    max seconds to wait for pre-turn recall
 """
 
 from __future__ import annotations
@@ -402,7 +403,15 @@ class VityMemoryProvider(MemoryProvider):
         nothing this turn rather than block the user.
         """
         memories = self._dedupe_search(self._get_recall_client(), query, top_k)
-        return "\n".join(f"- {m}" for m in memories) if memories else ""
+        if not memories:
+            return ""
+        text = "\n".join(f"- {m}" for m in memories)
+        # Bound the injected context to ~max_recall_tokens (approx 4 chars/token)
+        # so a large memory set can't crowd out the conversation.
+        budget = max(int(self._max_recall_tokens), 0) * 4
+        if budget and len(text) > budget:
+            text = text[:budget].rstrip()
+        return text
 
     # -- System Prompt Block -------------------------------------------------
 

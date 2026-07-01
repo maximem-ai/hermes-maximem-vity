@@ -12,6 +12,8 @@ If the installer printed **✅ All set!**, just start the agent:
 hermes
 ```
 
+Already had Hermes (or the gateway) running during install? Restart it to load the newly-activated provider — gateway users: `hermes gateway restart`.
+
 ## Set or change your API key
 
 The installer prompts for the key. To set it — **or to replace an existing one** — pass it explicitly (written de-duplicated, so no stale copies remain):
