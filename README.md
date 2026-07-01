@@ -1,3 +1,5 @@
+     
+
 # Vity Memory for Hermes Agent
 
 **Vity by Maximem AI** — persistent, cross-session semantic memory for [Hermes Agent](https://github.com/NousResearch/hermes-agent), distributed as a standalone plugin.
@@ -19,9 +21,9 @@ hermes-maximem-vity install
 
 `hermes-maximem-vity install` does everything in one step:
 
-1. Copies the plugin into `~/.hermes/plugins/vity/`, where Hermes discovers it.
+1. Copies the plugin into `~/.hermes/plugins/maximem_vity/`, where Hermes discovers it.
 2. **Prompts for your API key** and saves it to `~/.hermes/.env` (no duplicates).
-3. **Activates** the provider (`memory.provider: vity`).
+3. **Activates** the provider (`memory.provider: maximem_vity`).
 
 It prints `✅ All set!` when finished. Start the agent with `hermes`.
 
@@ -48,8 +50,8 @@ You don't need to match Python versions — the `maximem-vity-sdk` dependency is
 
 ```bash
 hermes-maximem-vity status   # plugin installed ✓, SDK available to Hermes ✓
-hermes memory status         # shows: vity ← active
-hermes vity status           # API key set ✓, SDK installed ✓, connection ok ✓
+hermes memory status         # shows: maximem_vity ← active
+hermes maximem_vity status           # API key set ✓, SDK installed ✓, connection ok ✓
 ```
 
 ### Update / remove
@@ -61,7 +63,7 @@ hermes-maximem-vity uninstall                                               # re
 
 ### Troubleshooting
 
-**`hermes vity status` still says `maximem-vity-sdk not installed` — even after `pip install`?**
+**`hermes maximem_vity status` still says `maximem-vity-sdk not installed` — even after `pip install`?**
 
 Hermes runs inside its **own isolated environment**, which is usually *not* the Python that ran `pip install` (Anaconda or system Python). The SDK must live in Hermes' environment, and `hermes-maximem-vity install` puts it there for you — just re-run it:
 
@@ -81,6 +83,14 @@ hermes-maximem-vity status     # confirm: SDK available to Hermes ✓
 | `MAXIMEM_API_KEY` | ✅       | Your Maximem API key (`mx_…`). `VITY_API_KEY` is also accepted. |
 
 > The API key owns the memory space — use a separate key per account that needs isolated memories.
+
+**Change / update your key** — a plain re-install **keeps** the existing key (you'll see `already configured`). To replace it, pass the new key explicitly (it's written de-duplicated, so no stale copies are left behind):
+
+```bash
+hermes-maximem-vity install --api-key mx_your_new_key
+```
+
+Or edit `~/.hermes/.env` directly, then restart Hermes (gateway users: `hermes gateway restart`).
 
 **Tunables** (optional, non-secret — `$HERMES_HOME/vity.json`, created on install):
 
@@ -125,15 +135,15 @@ In chat, this is transparent: ask the agent to "remember that …" and it calls 
 Manage memory directly from the terminal:
 
 ```bash
-hermes vity status                          # config + live connection check
-hermes vity search "favorite color"         # semantic search
-hermes vity search "deadlines" --limit 20 --json
-hermes vity store "I prefer dark mode" --type preference
-hermes vity forget "old project"            # dry-run (preview)
-hermes vity forget "old project" --yes      # confirm deletion
+hermes maximem_vity status                          # config + live connection check
+hermes maximem_vity search "favorite color"         # semantic search
+hermes maximem_vity search "deadlines" --limit 20 --json
+hermes maximem_vity store "I prefer dark mode" --type preference
+hermes maximem_vity forget "old project"            # dry-run (preview)
+hermes maximem_vity forget "old project" --yes      # confirm deletion
 ```
 
-> To (re)activate the provider, use `hermes config set memory.provider vity`. Avoid the interactive `hermes memory setup` wizard — buffered/pasted terminal input can drop the selection and leave the provider unset.
+> To (re)activate the provider, use `hermes config set memory.provider maximem_vity`. Avoid the interactive `hermes memory setup` wizard — buffered/pasted terminal input can drop the selection and leave the provider unset.
 
 ---
 
@@ -148,14 +158,14 @@ Tests stub the Hermes host modules (`agent.memory_provider`, `tools.registry`, `
 
 ## Layout
 
-| Path                                                  | Purpose                                                                                                 |
-| ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
-| `src/hermes_maximem_vity/installer.py`              | The`hermes-maximem-vity` console command (`install` / `uninstall` / `status`).                  |
-| `src/hermes_maximem_vity/payload/provider.py`       | `VityMemoryProvider` + `register()` — copied to `~/.hermes/plugins/vity/__init__.py` on install. |
-| `src/hermes_maximem_vity/payload/cli.py`            | The`hermes vity …` subcommands.                                                                      |
-| `src/hermes_maximem_vity/payload/plugin.yaml`       | Plugin manifest (dependencies, required env).                                                           |
-| `src/hermes_maximem_vity/payload/vity.json.example` | Tunables template (seeded to`vity.json` on install).                                                  |
-| `tests/`                                            | Unit tests + host-module stubs.                                                                         |
+| Path                                                  | Purpose                                                                                                         |
+| ----------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| `src/hermes_maximem_vity/installer.py`              | The`hermes-maximem-vity` console command (`install` / `uninstall` / `status`).                          |
+| `src/hermes_maximem_vity/payload/provider.py`       | `VityMemoryProvider` + `register()` — copied to `~/.hermes/plugins/maximem_vity/__init__.py` on install. |
+| `src/hermes_maximem_vity/payload/cli.py`            | The`hermes maximem_vity …` subcommands.                                                                      |
+| `src/hermes_maximem_vity/payload/plugin.yaml`       | Plugin manifest (dependencies, required env).                                                                   |
+| `src/hermes_maximem_vity/payload/vity.json.example` | Tunables template (seeded to`vity.json` on install).                                                          |
+| `tests/`                                            | Unit tests + host-module stubs.                                                                                 |
 
 ## License
 

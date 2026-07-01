@@ -1,5 +1,5 @@
-name: vity
-version: 1.0.0
+name: maximem_vity
+version: 1.1.0
 manifest_version: 1
 description: "Vity by Maximem AI — cross-session semantic memory with profile-based recall, memory graph, and <100ms context injection."
 

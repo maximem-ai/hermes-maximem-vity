@@ -2,9 +2,9 @@
 
 `hermes-maximem-vity install` already did everything for you:
 
-- ✅ Copied the plugin into `~/.hermes/plugins/vity/`
+- ✅ Copied the plugin into `~/.hermes/plugins/maximem_vity/`
 - ✅ Installed `maximem-vity-sdk` into Hermes' **own** environment
-- ✅ Activated the provider (`memory.provider: vity`)
+- ✅ Activated the provider (`memory.provider: maximem_vity`)
 
 If the installer printed **✅ All set!**, just start the agent:
 
@@ -12,30 +12,30 @@ If the installer printed **✅ All set!**, just start the agent:
 hermes
 ```
 
-## If your API key wasn't set
+## Set or change your API key
 
-The installer prompts for it (or pass `--api-key mx_…`). To add it now:
+The installer prompts for the key. To set it — **or to replace an existing one** — pass it explicitly (written de-duplicated, so no stale copies remain):
 
 ```bash
-echo 'MAXIMEM_API_KEY=mx_...' >> ~/.hermes/.env
+hermes-maximem-vity install --api-key mx_your_key
 ```
 
-Get a key at https://app.maximem.ai/api-keys
+Note: a plain re-install **keeps** your current key (`already configured`) — you must pass `--api-key` to change it. Get a key at https://app.maximem.ai/api-keys
 
-Running a gateway? Restart it to pick up the change: `hermes gateway restart`.
+Gateway users: restart to pick up the change — `hermes gateway restart`.
 
 ## Verify
 
 ```bash
-hermes memory status     # should show vity active
-hermes vity status       # config + live connection check (connection: ok ✓)
-hermes vity search "anything"
+hermes memory status     # should show maximem_vity active
+hermes maximem_vity status       # config + live connection check (connection: ok ✓)
+hermes maximem_vity search "anything"
 ```
 
 ## Re-activate (if ever needed)
 
 ```bash
-hermes config set memory.provider vity
+hermes config set memory.provider maximem_vity
 ```
 
 Avoid the interactive `hermes memory setup` wizard — buffered/pasted terminal

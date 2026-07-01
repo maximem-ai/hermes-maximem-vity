@@ -1,18 +1,18 @@
-"""``hermes vity`` CLI subcommands — terminal memory management.
+"""``hermes maximem_vity`` CLI subcommands — terminal memory management.
 
 Auto-wired by the host's ``discover_plugin_cli_commands()`` when
-``memory.provider`` is set to ``vity``:
+``memory.provider`` is set to ``maximem_vity``:
 
   - ``register_cli(subparser)`` builds the argparse tree
-  - ``vity_command(args)`` is the dispatch handler
+  - ``maximem_vity_command(args)`` is the dispatch handler
 
 Commands::
 
-    hermes vity status                     # config + connection check
-    hermes vity search "favorite color"    # semantic search
-    hermes vity search "deadlines" --limit 20 --json
-    hermes vity store "I prefer dark mode" --type preference
-    hermes vity forget "old project" --yes # delete (omit --yes for dry-run)
+    hermes maximem_vity status                     # config + connection check
+    hermes maximem_vity search "favorite color"    # semantic search
+    hermes maximem_vity search "deadlines" --limit 20 --json
+    hermes maximem_vity store "I prefer dark mode" --type preference
+    hermes maximem_vity forget "old project" --yes # delete (omit --yes for dry-run)
 """
 
 from __future__ import annotations
@@ -82,7 +82,7 @@ def _make_client():
     api_key = cfg.get("api_key", "")
     if not api_key:
         print("MAXIMEM_API_KEY not set. Add it to ~/.hermes/.env or run:")
-        print("  hermes memory setup vity")
+        print("  hermes-maximem-vity install")
         sys.exit(1)
     endpoint = cfg.get("endpoint", "")
     if endpoint:
@@ -202,8 +202,8 @@ def _cmd_forget(query: str, confirm: bool) -> None:
         print(f"Deleted {count} {noun}.")
 
 
-def vity_command(args) -> None:
-    """Route ``hermes vity <subcommand>``."""
+def maximem_vity_command(args) -> None:
+    """Route ``hermes maximem_vity <subcommand>``."""
     sub = getattr(args, "vity_subcommand", None)
     if sub == "status" or sub is None:
         _cmd_status()
@@ -218,7 +218,7 @@ def vity_command(args) -> None:
 
 
 def register_cli(subparser) -> None:
-    """Build the ``hermes vity`` argparse subcommand tree."""
+    """Build the ``hermes maximem_vity`` argparse subcommand tree."""
     subs = subparser.add_subparsers(dest="vity_subcommand")
 
     subs.add_parser("status", help="Show Vity config and connection status")
