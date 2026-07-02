@@ -62,6 +62,29 @@ def test_returns_none_when_unresolvable(tmp_path, monkeypatch):
     assert installer._hermes_python() is None
 
 
+# -- Windows layout (regression: SDK-not-installed on Windows) ---------------
+
+def test_venv_python_layout_per_os(monkeypatch):
+    # Build the input Path first; pathlib.Path("...") would try to make a
+    # WindowsPath (and raise) once os.name is faked to "nt" on a POSIX host.
+    v = Path("v")
+    monkeypatch.setattr(installer.os, "name", "nt")
+    assert installer._venv_python(v).as_posix() == "v/Scripts/python.exe"
+    monkeypatch.setattr(installer.os, "name", "posix")
+    assert installer._venv_python(v).as_posix() == "v/bin/python"
+
+
+def test_windows_resolves_scripts_python(tmp_path, monkeypatch):
+    """On Windows the interpreter is venv\\Scripts\\python.exe, not bin/python."""
+    py = tmp_path / "hermes-agent" / "venv" / "Scripts" / "python.exe"
+    py.parent.mkdir(parents=True)
+    py.write_text("")
+    monkeypatch.setattr(installer.os, "name", "nt")
+    monkeypatch.setattr(installer, "_hermes_home", lambda: tmp_path)
+    monkeypatch.setattr(installer.shutil, "which", lambda _: None)
+    assert installer._hermes_python() == str(py)
+
+
 # -- _install_sdk_into_hermes: install/skip behaviour ------------------------
 
 def test_install_skips_when_already_importable(monkeypatch):
