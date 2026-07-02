@@ -72,6 +72,17 @@ hermes-maximem-vity install
 hermes-maximem-vity status     # confirm: SDK available to Hermes ✓
 ```
 
+**Windows: `hermes-maximem-vity` is "not recognized as a command"?**
+
+`pip install --user` on Windows drops the console script in a `Scripts` folder that isn't on `PATH`. Add it for the session (PowerShell), then run install:
+
+```powershell
+$env:Path += ";$(python -m site --user-base)\Python$($(python -c 'import sys;print(f"{sys.version_info.major}{sys.version_info.minor}")'))\Scripts"
+hermes-maximem-vity install
+```
+
+Or just call it by full path once: `& "$(python -m site --user-base)\Python313\Scripts\hermes-maximem-vity.exe" install`. To make it permanent, add that `Scripts` folder to your user `PATH` in *Environment Variables*.
+
 ---
 
 ## Configuration
