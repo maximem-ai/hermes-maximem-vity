@@ -1,13 +1,14 @@
 name: maximem_vity
-version: 1.1.1
+version: 1.2.0
 manifest_version: 1
 description: "Vity by Maximem AI — cross-session semantic memory with profile-based recall, memory graph, and <100ms context injection."
 
 # Installed automatically by `hermes memory setup vity` (uv pip install).
-# 0.2.0+ is required: it fixes recall()/search() to read the backend's
-# `sources` array (0.1.0 dropped retrieved memories when `context` was empty).
+# 0.2.3+ is required: 0.2.1 fixed recall()/search() to read the backend's
+# `sources` array; 0.2.3 documents the async capture contract and stops
+# mutating caller-supplied message lists.
 pip_dependencies:
-  - maximem-vity-sdk>=0.2.1,<1
+  - maximem-vity-sdk>=0.2.3,<1
 
 # Prompted for during `hermes plugins install` (saved to ~/.hermes/.env).
 requires_env:
@@ -15,6 +16,3 @@ requires_env:
     description: "Maximem API key (starts with mx_)"
     url: "https://app.maximem.ai/api-keys"
     secret: true
-
-hooks:
-  - on_session_end

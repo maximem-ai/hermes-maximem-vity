@@ -28,6 +28,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import sys
 import threading
 from typing import Any, Dict, List
 
@@ -44,6 +45,11 @@ _DEFAULT_MIN_PROMPT_LENGTH = 5
 # the user — we bound it low and degrade to "no memory this turn". The healthy
 # search endpoint responds in ~2s; capture/store keep the SDK's default timeout.
 _DEFAULT_RECALL_TIMEOUT = 6.0
+# Hard wall-clock cap on the WHOLE pre-turn recall. recall_timeout bounds a
+# single HTTP request, but search() can chain a recall() fallback (two requests),
+# so a slow backend could stack to ~2x. This caps the total prefetch wait so one
+# bad turn degrades to "no memory" fast instead of blocking the user.
+_DEFAULT_RECALL_DEADLINE = 3.0
 
 
 # ---------------------------------------------------------------------------
@@ -142,12 +148,20 @@ def _as_bool(value: Any, default: bool) -> bool:
     return bool(value)
 
 
-def _load_config() -> dict:
+def _load_config(hermes_home: str | None = None) -> dict:
     """Load Vity config from env vars + $HERMES_HOME/vity.json overrides.
 
     The API key is secret (env var only). Non-secret tunables may live in
     vity.json.
+
+    ``hermes_home`` is the host-injected, profile-scoped HERMES_HOME (passed to
+    ``initialize()``). When given we resolve ``vity.json`` under it instead of
+    the global default, so per-profile installs read their own config. Callers
+    without a session (``is_available()``, the CLI) pass nothing and fall back to
+    the global resolver.
     """
+    from pathlib import Path
+
     from hermes_constants import get_hermes_home
 
     config: Dict[str, Any] = {
@@ -169,9 +183,11 @@ def _load_config() -> dict:
         "max_recall_tokens": _DEFAULT_MAX_RECALL_TOKENS,
         "min_prompt_length": _DEFAULT_MIN_PROMPT_LENGTH,
         "recall_timeout": _DEFAULT_RECALL_TIMEOUT,
+        "recall_deadline": _DEFAULT_RECALL_DEADLINE,
     }
 
-    config_path = get_hermes_home() / "vity.json"
+    base = Path(hermes_home) if hermes_home else get_hermes_home()
+    config_path = base / "vity.json"
     if config_path.exists():
         try:
             file_cfg = json.loads(config_path.read_text(encoding="utf-8"))
@@ -196,6 +212,10 @@ def _load_config() -> dict:
         config["recall_timeout"] = float(config.get("recall_timeout") or _DEFAULT_RECALL_TIMEOUT)
     except (TypeError, ValueError):
         config["recall_timeout"] = _DEFAULT_RECALL_TIMEOUT
+    try:
+        config["recall_deadline"] = float(config.get("recall_deadline") or _DEFAULT_RECALL_DEADLINE)
+    except (TypeError, ValueError):
+        config["recall_deadline"] = _DEFAULT_RECALL_DEADLINE
 
     return config
 
@@ -235,6 +255,10 @@ class VityMemoryProvider(MemoryProvider):
         self._max_recall_tokens = _DEFAULT_MAX_RECALL_TOKENS
         self._min_prompt_length = _DEFAULT_MIN_PROMPT_LENGTH
         self._recall_timeout = _DEFAULT_RECALL_TIMEOUT
+        self._recall_deadline = _DEFAULT_RECALL_DEADLINE
+        # Skip memory writes in non-primary contexts (cron/flush/subagent) so
+        # automated runs don't corrupt the user's memory. Resolved in initialize().
+        self._write_enabled = True
         # Background threads (non-blocking pattern — REQUIRED by Hermes contract).
         # Recall runs synchronously per-turn in prefetch() against the current
         # message; only capture/sync runs in the background.
@@ -306,7 +330,7 @@ class VityMemoryProvider(MemoryProvider):
 
     def initialize(self, session_id: str, **kwargs) -> None:
         """Initialize Vity client for this session."""
-        config = _load_config()
+        config = _load_config(kwargs.get("hermes_home"))
         self._api_key = config.get("api_key", "")
         self._endpoint = config.get("endpoint", "")
         self._auto_recall = config.get("auto_recall", True)
@@ -314,15 +338,34 @@ class VityMemoryProvider(MemoryProvider):
         self._max_recall_tokens = config.get("max_recall_tokens", _DEFAULT_MAX_RECALL_TOKENS)
         self._min_prompt_length = config.get("min_prompt_length", _DEFAULT_MIN_PROMPT_LENGTH)
         self._recall_timeout = config.get("recall_timeout", _DEFAULT_RECALL_TIMEOUT)
-        self._session_id = session_id
-        logger.debug(
-            "Vity initialized: session=%s auto_recall=%s auto_capture=%s",
-            session_id, self._auto_recall, self._auto_capture,
+        self._recall_deadline = config.get("recall_deadline", _DEFAULT_RECALL_DEADLINE)
+
+        # Skip writes for non-primary agent contexts. A cron job or a subagent's
+        # system-prompt-driven turns would otherwise be captured as if the user
+        # said them, corrupting the user's memory profile. Mirrors the in-tree
+        # honcho/supermemory providers.
+        agent_context = (kwargs.get("agent_context") or "").strip().lower()
+        platform = (kwargs.get("platform") or "").strip().lower()
+        self._write_enabled = (
+            agent_context not in {"cron", "flush", "subagent"} and platform != "cron"
         )
 
-        # First turn of the session. prefetch() searches the actual user
-        # message, so there is no separate warm-up query to fire here.
+        logger.debug(
+            "Vity initialized: session=%s auto_recall=%s auto_capture=%s write_enabled=%s",
+            session_id, self._auto_recall, self._auto_capture, self._write_enabled,
+        )
+
+        # First turn of the session — exempt from the min-length recall skip.
         self._cold_start = True
+
+        # Warm the recall path in the background so the first real turn doesn't
+        # pay the cold-start tax (SDK import + client build + DNS + TLS), which
+        # is what made the first prefetch take ~12s. Best-effort, off-turn.
+        if self._auto_recall and self._api_key:
+            self._prefetch_thread = threading.Thread(
+                target=self._warm_recall, daemon=True, name="vity-warmup"
+            )
+            self._prefetch_thread.start()
 
     def _build_client(self, timeout: float | None = None):
         """Construct a VityClient, optionally with a custom HTTP timeout."""
@@ -367,6 +410,19 @@ class VityMemoryProvider(MemoryProvider):
                     "maximem-vity-sdk not installed. "
                     "Run: pip install maximem-vity-sdk"
                 )
+
+    def _warm_recall(self) -> None:
+        """One-time background warm-up of the recall client and connection.
+
+        Builds the short-timeout client and fires a tiny throwaway search so the
+        SDK import, HTTP client, DNS, and TLS handshake are all paid off-turn.
+        The first user turn then hits a warm connection (~2s) instead of a cold
+        one (~12s). Fully best-effort — any failure is ignored.
+        """
+        try:
+            self._get_recall_client().search(query="warmup", top_k=1)
+        except Exception as e:
+            logger.debug("Vity recall warm-up skipped (non-fatal): %s", e)
 
     # -- Retrieval (shared by auto-recall AND the vity_recall tool) -----------
 
@@ -413,6 +469,29 @@ class VityMemoryProvider(MemoryProvider):
             text = text[:budget].rstrip()
         return text
 
+    def _recall_within_deadline(self, query: str) -> str:
+        """Run pre-turn recall with a hard wall-clock cap.
+
+        search() may chain a recall() fallback (two HTTP requests), so the
+        per-request recall_timeout alone can't bound the total wait. We run the
+        recall on a worker thread and give up after ``recall_deadline`` seconds,
+        degrading to "no memory this turn" rather than blocking the user. A
+        timed-out worker is a daemon and its (discarded) result never lands.
+        """
+        box: Dict[str, str] = {"text": ""}
+
+        def _run() -> None:
+            try:
+                box["text"] = self._recall_for_injection(query)
+            except Exception as e:
+                # Slow/unhealthy endpoint — degrade to no memory this turn.
+                logger.debug("Vity prefetch retrieval failed (non-fatal): %s", e)
+
+        worker = threading.Thread(target=_run, daemon=True, name="vity-recall")
+        worker.start()
+        worker.join(timeout=self._recall_deadline)
+        return box["text"]
+
     # -- System Prompt Block -------------------------------------------------
 
     def system_prompt_block(self) -> str:
@@ -449,13 +528,7 @@ class VityMemoryProvider(MemoryProvider):
         if len(query.strip()) < self._min_prompt_length and not self._cold_start:
             return ""
 
-        result = ""
-        try:
-            result = self._recall_for_injection(query)
-        except Exception as e:
-            # Slow/unhealthy endpoint (e.g. recall timeout) — degrade to no
-            # memory this turn rather than block the user.
-            logger.debug("Vity prefetch retrieval failed (non-fatal): %s", e)
+        result = self._recall_within_deadline(query)
 
         self._cold_start = False
 
@@ -487,7 +560,10 @@ class VityMemoryProvider(MemoryProvider):
             total_turn_ms = (time.perf_counter() - self._prefetch_done_at) * 1000
             vity_total_ms = self._vity_prefetch_ms + self._vity_tool_ms
             hermes_llm_ms = max(0.0, total_turn_ms - self._vity_tool_ms)
-            if self._vity_retrieved:
+            # Only render the timing line on a real terminal — on non-TTY
+            # sinks (pipes, logs, messaging gateways) the ANSI escapes show up
+            # as literal `?[2m…?[0m` garble.
+            if self._vity_retrieved and sys.stdout.isatty():
                 _DIM, _RESET = "\033[2m", "\033[0m"
                 print(
                     f"{_DIM}⏱ Vity memory · retrieved in {vity_total_ms:.0f}ms · "
@@ -502,13 +578,20 @@ class VityMemoryProvider(MemoryProvider):
             self._vity_tool_ms = 0.0
             self._vity_retrieved = False
 
-        if not self._auto_capture:
+        # auto_capture off, or a non-primary context (cron/flush/subagent) whose
+        # turns must not be written to the user's memory.
+        if not self._auto_capture or not self._write_enabled:
             return
 
         def _sync():
             try:
                 client = self._get_client()
-                client.capture(
+                # Capture is async server-side: the backend enqueues the turn and
+                # extracts durable facts through several LLM stages later, so a
+                # non-error return means "accepted for processing" (counts come
+                # back None). We log it so a dropped/failed capture leaves a trace
+                # — the SDK cannot expose a request_id/status through the proxy.
+                result = client.capture(
                     messages=[
                         {"role": "user", "content": user_content, "timestamp": now},
                         {"role": "assistant", "content": assistant_content, "timestamp": now + 1},
@@ -516,6 +599,7 @@ class VityMemoryProvider(MemoryProvider):
                     agent_id="hermes",
                     session_key=session_id,
                 )
+                logger.debug("Vity capture accepted (async, extraction deferred): %s", result)
             except Exception as e:
                 logger.warning("Vity sync failed: %s", e)
 
@@ -526,6 +610,28 @@ class VityMemoryProvider(MemoryProvider):
         self._sync_thread = threading.Thread(target=_sync, daemon=True, name="vity-sync")
         self._sync_thread.start()
 
+    # -- Session lifecycle ---------------------------------------------------
+
+    def on_session_switch(
+        self,
+        new_session_id: str,
+        *,
+        parent_session_id: str = "",
+        reset: bool = False,
+        rewound: bool = False,
+        **kwargs,
+    ) -> None:
+        """Handle a mid-process session change (/reset, /new, /branch, rewind).
+
+        The only per-session state we cache is the cold-start flag, which exempts
+        a session's first message from the min-length recall skip. On a genuine
+        new conversation (``reset``) or a truncated transcript (``rewound``),
+        re-arm it so the fresh first turn still gets recall. Writes use the
+        per-turn ``session_id`` passed to sync_turn(), so nothing else to reset.
+        """
+        if reset or rewound:
+            self._cold_start = True
+
     # -- Built-in memory mirroring -------------------------------------------
 
     def on_memory_write(self, action, target, content, metadata=None):
@@ -535,7 +641,12 @@ class VityMemoryProvider(MemoryProvider):
         fact is stored in Vity so it participates in semantic recall. Only
         mirrors 'add'/'replace'.
         """
-        if not self._auto_capture or action not in {"add", "replace"} or not content:
+        if (
+            not self._auto_capture
+            or not self._write_enabled
+            or action not in {"add", "replace"}
+            or not content
+        ):
             return
 
         def _mirror():
@@ -604,7 +715,7 @@ class VityMemoryProvider(MemoryProvider):
                 memory_type = args.get("memory_type", "fact")
                 try:
                     result = client.store(content=content, memory_type=memory_type)
-                    return json.dumps({"result": "Memory stored successfully.", "id": result.get("id", "")})
+                    return json.dumps({"result": "Memory stored successfully.", "id": (result or {}).get("id", "")})
                 except Exception as e:
                     return tool_error(f"Failed to store memory: {e}")
 
