@@ -217,3 +217,146 @@ def test_prefetch_caps_injected_context_to_max_recall_tokens(vity_module, monkey
 
     assert provider._vity_retrieved
     assert out.count("x") <= 40
+
+
+# --------------------------------------------------------------------------
+# #1 — writes must be skipped in non-primary (cron/flush/subagent) contexts
+# --------------------------------------------------------------------------
+
+def _init_with_stub_client(vity_module, monkeypatch, **init_kwargs):
+    """Initialize a provider with a stubbed SDK and a key set, then return it."""
+    fake_client = MagicMock(search=MagicMock(return_value=[]))
+    monkeypatch.setitem(
+        sys.modules, "maximem_vity", SimpleNamespace(VityClient=lambda **_: fake_client)
+    )
+    monkeypatch.setenv("MAXIMEM_API_KEY", "mx_test_key")
+    provider = vity_module.VityMemoryProvider()
+    provider.initialize("s1", **init_kwargs)
+    return provider, fake_client
+
+
+def test_cron_context_disables_writes(vity_module, monkeypatch):
+    provider, fake_client = _init_with_stub_client(vity_module, monkeypatch, agent_context="cron")
+    assert provider._write_enabled is False
+
+    provider.sync_turn("hi", "hello", session_id="s1")
+    fake_client.capture.assert_not_called()
+
+    provider.on_memory_write("add", "user", "I like tea")
+    fake_client.store.assert_not_called()
+
+
+def test_subagent_and_flush_contexts_disable_writes(vity_module, monkeypatch):
+    for ctx in ("flush", "subagent"):
+        provider, _ = _init_with_stub_client(vity_module, monkeypatch, agent_context=ctx)
+        assert provider._write_enabled is False, ctx
+
+
+def test_platform_cron_disables_writes(vity_module, monkeypatch):
+    provider, _ = _init_with_stub_client(vity_module, monkeypatch, platform="cron")
+    assert provider._write_enabled is False
+
+
+def test_primary_context_keeps_writes_enabled(vity_module, monkeypatch):
+    provider, fake_client = _init_with_stub_client(vity_module, monkeypatch, agent_context="primary")
+    assert provider._write_enabled is True
+
+    provider.sync_turn("hi", "hello", session_id="s1")
+    if provider._sync_thread:
+        provider._sync_thread.join(timeout=2)
+    fake_client.capture.assert_called_once()
+
+
+def test_no_context_defaults_to_writes_enabled(vity_module, monkeypatch):
+    # A plain CLI turn passes no agent_context — writes must stay on.
+    provider, _ = _init_with_stub_client(vity_module, monkeypatch)
+    assert provider._write_enabled is True
+
+
+# --------------------------------------------------------------------------
+# #2 — cold-start warm-up + wall-clock recall deadline
+# --------------------------------------------------------------------------
+
+def test_initialize_warms_recall_in_background(vity_module, monkeypatch):
+    provider, fake_client = _init_with_stub_client(vity_module, monkeypatch, agent_context="primary")
+    # The warm-up thread fires one throwaway search off-turn.
+    if provider._prefetch_thread:
+        provider._prefetch_thread.join(timeout=2)
+    fake_client.search.assert_called_once()
+
+
+def test_recall_deadline_caps_slow_prefetch(vity_module, monkeypatch):
+    import time
+
+    fake_client = MagicMock()
+
+    def slow_search(*_a, **_k):
+        time.sleep(1.0)
+        return [{"content": "too late", "score": 0.9}]
+
+    fake_client.search.side_effect = slow_search
+    provider = _provider_with_client(vity_module, monkeypatch, fake_client)
+    provider._recall_deadline = 0.1  # give up long before the 1s search returns
+
+    assert provider.prefetch("anything on file?") == ""
+
+
+# --------------------------------------------------------------------------
+# #4 — honour the host-injected hermes_home
+# --------------------------------------------------------------------------
+
+def test_load_config_honors_explicit_hermes_home(vity_module, tmp_path):
+    custom = tmp_path / "profile_home"
+    custom.mkdir()
+    (custom / "vity.json").write_text(json.dumps({"min_prompt_length": 99}))
+
+    cfg = vity_module._load_config(str(custom))
+    assert cfg["min_prompt_length"] == 99
+
+
+# --------------------------------------------------------------------------
+# #5 — on_session_switch re-arms cold_start only on a genuine reset
+# --------------------------------------------------------------------------
+
+def test_session_reset_rearms_cold_start(vity_module):
+    provider = vity_module.VityMemoryProvider()
+    provider._cold_start = False
+    provider.on_session_switch("s2", reset=True)
+    assert provider._cold_start is True
+
+
+def test_session_resume_keeps_cold_start_off(vity_module):
+    provider = vity_module.VityMemoryProvider()
+    provider._cold_start = False
+    provider.on_session_switch("s2", reset=False)
+    assert provider._cold_start is False
+
+
+# --------------------------------------------------------------------------
+# #6 — timing line is suppressed on non-TTY sinks (no ANSI garble)
+# --------------------------------------------------------------------------
+
+def test_timing_line_suppressed_when_not_a_tty(vity_module, monkeypatch, capsys):
+    fake_client = MagicMock()
+    provider = _provider_with_client(vity_module, monkeypatch, fake_client)
+    provider._vity_retrieved = True
+    provider._prefetch_done_at = 1.0  # pretend a retrieval happened this turn
+    provider._write_enabled = False   # skip the capture thread; we only test output
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: False)
+
+    provider.sync_turn("hi", "hello", session_id="s1")
+
+    assert "Vity memory" not in capsys.readouterr().out
+
+
+# --------------------------------------------------------------------------
+# #8 — store dispatch tolerates a None result from the SDK
+# --------------------------------------------------------------------------
+
+def test_store_tolerates_none_result(vity_module, monkeypatch):
+    fake_client = MagicMock()
+    fake_client.store.return_value = None
+    provider = _provider_with_client(vity_module, monkeypatch, fake_client)
+
+    out = json.loads(provider.handle_tool_call("vity_store", {"content": "hi"}))
+    assert out["id"] == ""

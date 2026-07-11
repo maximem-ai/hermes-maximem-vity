@@ -201,7 +201,7 @@ def _install_sdk_into_hermes() -> bool:
 
     try:
         proc = subprocess.run(
-            [py, "-m", "pip", "install", "maximem-vity-sdk>=0.2.1,<1"],
+            [py, "-m", "pip", "install", "maximem-vity-sdk>=0.2.3,<1"],
             capture_output=True, timeout=300,
         )
     except Exception:
@@ -294,7 +294,7 @@ def cmd_install(force: bool = False, api_key: str | None = None) -> int:
             hpy = _hermes_python()
             target_py = hpy or "<your hermes venv python>"
             print("  • Install the SDK into Hermes' interpreter:")
-            print(f"      {target_py} -m pip install 'maximem-vity-sdk>=0.2.1,<1'")
+            print(f"      {target_py} -m pip install 'maximem-vity-sdk>=0.2.3,<1'")
         if not key_ok:
             print("  • Add your API key:")
             print("      echo 'MAXIMEM_API_KEY=mx_...' >> ~/.hermes/.env")
