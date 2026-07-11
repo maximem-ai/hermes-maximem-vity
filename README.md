@@ -54,11 +54,19 @@ hermes memory status         # shows: maximem_vity ← active
 hermes maximem_vity status           # API key set ✓, SDK installed ✓, connection ok ✓
 ```
 
-### Update / remove
+### Update 
+
+Update (always overwrites):
 
 ```bash
-pip install -U hermes-maximem-vity && hermes-maximem-vity install   # update (always overwrites)
-hermes-maximem-vity uninstall                                               # remove
+pip install -U hermes-maximem-vity
+hermes-maximem-vity install
+```
+
+Remove:
+
+```bash
+hermes-maximem-vity uninstall
 ```
 
 ### Troubleshooting
@@ -172,11 +180,11 @@ Tests stub the Hermes host modules (`agent.memory_provider`, `tools.registry`, `
 
 | Path                                                  | Purpose                                                                                                         |
 | ----------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
-| `src/hermes_maximem_vity/installer.py`              | The `hermes-maximem-vity` console command (`install` / `uninstall` / `status`).                          |
+| `src/hermes_maximem_vity/installer.py`              | The`hermes-maximem-vity` console command (`install` / `uninstall` / `status`).                          |
 | `src/hermes_maximem_vity/payload/provider.py`       | `VityMemoryProvider` + `register()` — copied to `~/.hermes/plugins/maximem_vity/__init__.py` on install. |
-| `src/hermes_maximem_vity/payload/cli.py`            | The `hermes maximem_vity …` subcommands.                                                                      |
+| `src/hermes_maximem_vity/payload/cli.py`            | The`hermes maximem_vity …` subcommands.                                                                      |
 | `src/hermes_maximem_vity/payload/plugin.yaml`       | Plugin manifest (dependencies, required env).                                                                   |
-| `src/hermes_maximem_vity/payload/vity.json.example` | Tunables template (seeded to `vity.json` on install).                                                          |
+| `src/hermes_maximem_vity/payload/vity.json.example` | Tunables template (seeded to`vity.json` on install).                                                          |
 | `tests/`                                            | Unit tests + host-module stubs.                                                                                 |
 
 ## License
