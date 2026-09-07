@@ -30,6 +30,7 @@ _LEGACY_PLUGIN_NAME = "vity"
 # payload filename -> installed filename in ~/.hermes/plugins/maximem_vity/
 _FILES = {
     "provider.py": "__init__.py",   # the MemoryProvider Hermes loads
+    "analytics.py": "analytics.py", # best-effort PostHog analytics helper
     "cli.py": "cli.py",             # the `hermes maximem_vity` subcommands
     "plugin.yaml": "plugin.yaml",   # manifest (deps, required env)
     "vity.json.example": "vity.json.example",
@@ -201,7 +202,7 @@ def _install_sdk_into_hermes() -> bool:
 
     try:
         proc = subprocess.run(
-            [py, "-m", "pip", "install", "maximem-vity-sdk>=0.2.3,<1"],
+            [py, "-m", "pip", "install", "maximem-vity-sdk>=0.3.0,<1"],
             capture_output=True, timeout=300,
         )
     except Exception:
@@ -294,7 +295,7 @@ def cmd_install(force: bool = False, api_key: str | None = None) -> int:
             hpy = _hermes_python()
             target_py = hpy or "<your hermes venv python>"
             print("  • Install the SDK into Hermes' interpreter:")
-            print(f"      {target_py} -m pip install 'maximem-vity-sdk>=0.2.3,<1'")
+            print(f"      {target_py} -m pip install 'maximem-vity-sdk>=0.3.0,<1'")
         if not key_ok:
             print("  • Add your API key:")
             print("      echo 'MAXIMEM_API_KEY=mx_...' >> ~/.hermes/.env")
@@ -305,7 +306,31 @@ def cmd_install(force: bool = False, api_key: str | None = None) -> int:
             print("      (not the interactive `hermes memory setup` — it can drop the selection)")
         print("  Then:  hermes maximem_vity status")
     print("─" * 52)
+
+    # Top-of-funnel analytics. Loaded from the payload (stdlib-only, best-effort)
+    # and sent inline because this process is about to exit. No-op unless a
+    # PostHog key is configured; never blocks or fails the install.
+    _track_install(sdk_ok=sdk_ok, key_ok=key_ok, activated=activated, api_key=api_key)
     return 0
+
+
+def _track_install(*, sdk_ok: bool, key_ok: bool, activated: bool, api_key: str | None) -> None:
+    """Fire the ``plugin_installed`` event via the payload's analytics helper."""
+    try:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "vity_analytics_installer", _payload_dir() / "analytics.py"
+        )
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        mod.track(
+            "plugin_installed",
+            api_key=api_key or "",
+            props={"sdk_ok": sdk_ok, "key_ok": key_ok, "activated": activated},
+            block=True,
+        )
+    except Exception:
+        pass
 
 
 def cmd_uninstall() -> int:

@@ -124,6 +124,15 @@ def _cmd_status() -> None:
         client = _make_client()
         client.search(query="connection check", top_k=1)
         print(_row("connection", "ok ✓"))
+        # Prefer a real memory count when the router exposes /stats; fall back
+        # silently to the connection check above until that route ships (404).
+        try:
+            stats = client.stats() or {}
+            total = stats.get("total", stats.get("count"))
+            if total is not None:
+                print(_row("memories", str(total)))
+        except Exception:
+            pass
         client.close()
     except Exception as e:
         print(_row("connection", f"failed ✗ ({e})"))
