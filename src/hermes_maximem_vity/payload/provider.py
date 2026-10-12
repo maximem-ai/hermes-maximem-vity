@@ -587,7 +587,10 @@ class VityMemoryProvider(MemoryProvider):
     def _build_client(self, timeout: float | None = None):
         """Construct a VityClient, optionally with a custom HTTP timeout."""
         from maximem_vity import VityClient
-        kwargs: Dict[str, Any] = {"api_key": self._api_key}
+        # Declare the integration channel explicitly. `channel` participates in V4 conversation
+        # identity server-side (chat_id = "{channel}:{sessionKey}"), and the SDK no longer defaults
+        # it to "hermes" — so Hermes must self-identify here rather than rely on the SDK default.
+        kwargs: Dict[str, Any] = {"api_key": self._api_key, "channel": "hermes", "agent_id": "hermes"}
         if self._endpoint:
             kwargs["endpoint"] = self._endpoint
         if timeout is not None:

@@ -119,3 +119,25 @@ def test_install_runs_pip_then_reverifies(monkeypatch):
 def test_install_returns_false_when_no_interpreter(monkeypatch):
     monkeypatch.setattr(installer, "_hermes_python", lambda: None)
     assert installer._install_sdk_into_hermes() is False
+
+
+# -- SDK version probe (regression: an old 0.2.x SDK passed the import-only check) --
+
+@pytest.mark.parametrize("version,ok", [("0.2.3", False), ("0.3.0", True), ("0.10.1", True)])
+def test_sdk_probe_requires_0_3(monkeypatch, version, ok):
+    import importlib.metadata
+    import types
+    monkeypatch.setitem(sys.modules, "maximem_vity", types.ModuleType("maximem_vity"))
+    monkeypatch.setattr(importlib.metadata, "version", lambda _name: version)
+    with pytest.raises(SystemExit) as exc:
+        exec(installer._SDK_PROBE, {})
+    assert (exc.value.code == 0) is ok
+
+
+def test_install_event_uses_configured_key_on_update(tmp_path, monkeypatch):
+    """An update passes no --api-key; the event must still authenticate with the .env key."""
+    monkeypatch.delenv("MAXIMEM_API_KEY", raising=False)
+    monkeypatch.delenv("VITY_API_KEY", raising=False)
+    monkeypatch.setattr(installer, "_hermes_home", lambda: tmp_path)
+    (tmp_path / ".env").write_text("OTHER=1\nMAXIMEM_API_KEY=mx_from_env\n")
+    assert installer._existing_key() == "mx_from_env"

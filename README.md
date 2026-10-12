@@ -119,6 +119,10 @@ Tunables (optional, non-secret, stored in `$HERMES_HOME/vity.json`, created on i
 
 For a self-hosted backend, set `MAXIMEM_ENDPOINT`, or `endpoint` in `vity.json`, to a non-default Maximem API URL.
 
+### Usage telemetry
+
+The plugin sends anonymous usage events (install, session start, recall latency and hit/miss, tool name and latency, capture outcome) to the Maximem API, authenticated with your API key. Events never include prompts, queries, responses or memory content. To turn this off, set `MAXIMEM_ANALYTICS=0` in `~/.hermes/.env`.
+
 ## How it works
 
 - **Recall before each turn.** A semantic search runs against the current message. If it returns within `recall_timeout` (default 6 seconds), the matches are injected as context; otherwise the turn proceeds with no memory rather than waiting. Only matches above `recall_min_score` are injected, so weak matches are not presented as fact.

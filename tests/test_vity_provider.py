@@ -90,7 +90,7 @@ def test_meeting_recall_dispatch(vity_module, monkeypatch):
     assert out["result"]["answer"].startswith("We decided")
 
 
-def test_client_built_with_api_key_only(vity_module, monkeypatch):
+def test_client_built_with_hermes_channel(vity_module, monkeypatch):
     constructor = MagicMock(return_value=MagicMock())
     monkeypatch.setitem(sys.modules, "maximem_vity", SimpleNamespace(VityClient=constructor))
 
@@ -98,7 +98,9 @@ def test_client_built_with_api_key_only(vity_module, monkeypatch):
     provider._api_key = "mx_test_key"
     provider._get_client()
 
-    constructor.assert_called_once_with(api_key="mx_test_key")
+    # SDK 0.3.0 defaults channel/agent_id to "unspecified"; Hermes must self-identify,
+    # since the server builds the conversation id as "{channel}:{sessionKey}".
+    constructor.assert_called_once_with(api_key="mx_test_key", channel="hermes", agent_id="hermes")
 
 
 def test_store_tool_dispatch(vity_module, monkeypatch):

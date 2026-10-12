@@ -63,17 +63,23 @@ def _env_path() -> Path:
     return _hermes_home() / ".env"
 
 
-def _key_already_set() -> bool:
-    """True if MAXIMEM_API_KEY (or VITY_API_KEY) is set in env or ~/.hermes/.env."""
-    if os.environ.get("MAXIMEM_API_KEY") or os.environ.get("VITY_API_KEY"):
-        return True
+def _existing_key() -> str:
+    """MAXIMEM_API_KEY (or VITY_API_KEY) from env or ~/.hermes/.env, else ""."""
+    key = os.environ.get("MAXIMEM_API_KEY") or os.environ.get("VITY_API_KEY")
+    if key:
+        return key
     env = _env_path()
     if env.exists():
         for line in env.read_text(errors="replace").splitlines():
             s = line.strip()
             if s.startswith(("MAXIMEM_API_KEY=", "VITY_API_KEY=")) and s.split("=", 1)[1].strip():
-                return True
-    return False
+                return s.split("=", 1)[1].strip()
+    return ""
+
+
+def _key_already_set() -> bool:
+    """True if MAXIMEM_API_KEY (or VITY_API_KEY) is set in env or ~/.hermes/.env."""
+    return bool(_existing_key())
 
 
 def _write_api_key(key: str) -> None:
@@ -177,6 +183,21 @@ def _hermes_python() -> str | None:
     return None
 
 
+# Run inside Hermes' interpreter: exits 0 only if the SDK imports AND is >= 0.3.0.
+# A bare import check let an old 0.2.x SDK pass, and the plugin then silently lost
+# recall (0.2.x lacks knowledge(), meetings_enabled(), per-call capture channel).
+_SDK_PROBE = (
+    "import maximem_vity, sys, importlib.metadata as m; "
+    "v = tuple(int(x) for x in m.version('maximem-vity-sdk').split('.')[:2]); "
+    "sys.exit(0 if v >= (0, 3) else 1)"
+)
+
+
+def _sdk_ok(py: str) -> bool:
+    """True when Hermes' interpreter imports a compatible (>=0.3.0) SDK."""
+    return subprocess.run([py, "-c", _SDK_PROBE], capture_output=True).returncode == 0
+
+
 def _install_sdk_into_hermes() -> bool:
     """Install ``maximem-vity-sdk`` into the interpreter that runs Hermes.
 
@@ -190,11 +211,12 @@ def _install_sdk_into_hermes() -> bool:
     if not py:
         return False
 
-    # Already importable by Hermes? Nothing to do.
-    if subprocess.run([py, "-c", "import maximem_vity"], capture_output=True).returncode == 0:
+    # Compatible SDK already importable by Hermes? Nothing to do. An older SDK
+    # fails the probe and falls through to the pip install below, which upgrades it.
+    if _sdk_ok(py):
         return True
 
-    print("  installing maximem-vity-sdk into Hermes' environment (one-time)…")
+    print("  installing/upgrading maximem-vity-sdk (>=0.3.0) in Hermes' environment…")
 
     # Make sure pip exists in that interpreter (venvs are often built without it).
     if subprocess.run([py, "-m", "pip", "--version"], capture_output=True).returncode != 0:
@@ -211,7 +233,7 @@ def _install_sdk_into_hermes() -> bool:
         return False
 
     # Verify the import really works now (not just that pip exited 0).
-    return subprocess.run([py, "-c", "import maximem_vity"], capture_output=True).returncode == 0
+    return _sdk_ok(py)
 
 
 def _activate_provider() -> bool:
@@ -325,7 +347,9 @@ def _track_install(*, sdk_ok: bool, key_ok: bool, activated: bool, api_key: str 
         spec.loader.exec_module(mod)
         mod.track(
             "plugin_installed",
-            api_key=api_key or "",
+            # Fall back to the configured key: an update/re-install passes no
+            # --api-key, and without a key the event can't authenticate (skipped).
+            api_key=api_key or _existing_key(),
             props={"sdk_ok": sdk_ok, "key_ok": key_ok, "activated": activated},
             block=True,
         )
@@ -355,10 +379,8 @@ def cmd_status() -> int:
     if not py:
         print("  SDK:      hermes interpreter not found (run `hermes` once?)")
     else:
-        importable = subprocess.run(
-            [py, "-c", "import maximem_vity"], capture_output=True
-        ).returncode == 0
-        print(f"  SDK:      {'available to Hermes ✓' if importable else 'NOT importable by Hermes ✗ — run: hermes-maximem-vity install'}")
+        ok = _sdk_ok(py)
+        print(f"  SDK:      {'>=0.3.0 available to Hermes ✓' if ok else 'missing or older than 0.3.0 ✗ — run: hermes-maximem-vity install'}")
     return 0
 
 

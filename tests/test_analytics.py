@@ -107,3 +107,21 @@ def test_body_never_contains_key_or_phc(analytics, monkeypatch):
     assert body["distinct_id"] == analytics.distinct_id("mx_super_secret_key")
     assert body["properties"]["retrieved"] is True
     assert body["properties"]["plugin_version"]
+
+
+def test_send_sets_explicit_user_agent(analytics, monkeypatch):
+    # Cloudflare 403s urllib's default "Python-urllib" agent, silently dropping events.
+    sent = {}
+
+    class _Resp:
+        def close(self):
+            pass
+
+    def fake_urlopen(req, timeout):
+        sent.update({k.lower(): v for k, v in req.header_items()})
+        return _Resp()
+
+    monkeypatch.setattr(analytics.urllib.request, "urlopen", fake_urlopen)
+    analytics._send("https://x/v1/telemetry", "mx_key", b"{}")
+    assert sent["user-agent"].startswith("hermes-maximem-vity/")
+    assert sent["authorization"] == "Bearer mx_key"
