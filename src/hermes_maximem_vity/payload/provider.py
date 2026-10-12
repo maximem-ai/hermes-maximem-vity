@@ -1,10 +1,10 @@
-"""Vity (Maximem AI) memory plugin — MemoryProvider for Hermes Agent.
+"""Vity (Maximem AI) memory plugin: MemoryProvider for Hermes Agent.
 
 Cross-session semantic memory with profile-based recall, a memory graph
 (facts, preferences, emotions, episodes, knowledge, profile), and low-latency
 context injection via the Maximem REST API (the ``maximem-vity-sdk`` client).
 
-This is a standalone plugin — it is installed into ``~/.hermes/plugins/maximem_vity/``
+This is a standalone plugin. It is installed into ``~/.hermes/plugins/maximem_vity/``
 and is not bundled with the core hermes-agent repo (see that repo's
 CONTRIBUTING.md, "Memory Providers: Ship as a Standalone Plugin").
 
@@ -13,9 +13,9 @@ Lifecycle:
   sync_turn()                -> capture the exchange after each turn
 
 Config (env var, recommended):
-  MAXIMEM_API_KEY  — Maximem API key (required, starts with mx_)
+  MAXIMEM_API_KEY: Maximem API key (required, starts with mx_)
 
-Config (non-secret tunables, optional) — $HERMES_HOME/vity.json:
+Config (non-secret tunables, optional), in $HERMES_HOME/vity.json:
   auto_recall        (bool,  default true)   inject memories before each turn
   auto_capture       (bool,  default true)   capture conversation after each turn
   max_recall_tokens  (int,   default 1000)   size cap for injected recall context
@@ -53,7 +53,7 @@ _DEFAULT_MAX_RECALL_TOKENS = 1000
 _DEFAULT_MIN_PROMPT_LENGTH = 5
 # Short timeout (seconds) for automatic recall. Auto-recall runs on the critical
 # path before every turn, so a slow/unhealthy Maximem endpoint must never block
-# the user — we bound it low and degrade to "no memory this turn". The healthy
+# the user, so we bound it low and degrade to "no memory this turn". The healthy
 # search endpoint responds in ~2s; capture/store keep the SDK's default timeout.
 _DEFAULT_RECALL_TIMEOUT = 6.0
 # Hard wall-clock cap on the WHOLE pre-turn recall. recall_timeout bounds a
@@ -71,7 +71,7 @@ _DEFAULT_RECALL_MIN_SCORE = 0.3
 # Session-start profile warm-load: off-turn, fetch a general
 # "who is this user" summary and inject it ONCE per session, the first turn it's
 # ready, as silent background context. recall() is the synthesized-profile path
-# — the right source for identity / interests / current work. Cached across
+# and the right source for identity / interests / current work. Cached across
 # sessions within the TTL so back-to-back sessions don't re-pay the call.
 _DEFAULT_WARM_PROFILE = True
 _PROFILE_TTL_SECONDS = 3600.0
@@ -103,7 +103,7 @@ def _strip_memory_context_prefix(text: str) -> str:
 # ("what's my sister's birthday?") searches fine. A follow-up that leans on the
 # prior turn ("tell me more", "why?", "what about that?") has no searchable
 # subject of its own, so we prepend the last substantial message. Kept to plain
-# token rules — no NLP dependency — and deliberately conservative: only SHORT
+# token rules (no NLP dependency) and deliberately conservative: only SHORT
 # messages that actually look anaphoric trigger augmentation, so clean topic
 # changes are never diluted with stale terms.
 _ANAPHORIC_TOKENS = frozenset({
@@ -143,7 +143,7 @@ def _needs_prior_context(query: str) -> bool:
 VITY_RECALL_SCHEMA = {
     "name": "vity_recall",
     "description": (
-        "Retrieve SPECIFIC stored memories about the user — individual facts, "
+        "Retrieve SPECIFIC stored memories about the user: individual facts, "
         "preferences, past decisions, project context. Returns discrete, verbatim "
         "items from the memory graph. Use this when you need a particular thing the "
         "user told you. (For what the user broadly KNOWS about a topic, use "
@@ -162,7 +162,7 @@ VITY_RECALL_SCHEMA = {
 VITY_PROFILE_SCHEMA = {
     "name": "vity_profile",
     "description": (
-        "Retrieve the user's full memory profile — all stored facts, preferences, "
+        "Retrieve the user's full memory profile: all stored facts, preferences, "
         "emotions, episodes, knowledge, and profile data. Use at conversation start "
         "for a complete context snapshot."
     ),
@@ -213,7 +213,7 @@ VITY_FORGET_SCHEMA = {
 VITY_KNOWLEDGE_SCHEMA = {
     "name": "vity_knowledge",
     "description": (
-        "Query the user's consolidated KNOWLEDGE — topic-level summaries of what they "
+        "Query the user's consolidated KNOWLEDGE: topic-level summaries of what they "
         "know or have learned, distilled across many memories. Returns items with "
         "topic, category, and a synthesized summary. Use for 'what does the user know "
         "about X' or their expertise on a subject. (For a specific individual fact the "
@@ -229,12 +229,12 @@ VITY_KNOWLEDGE_SCHEMA = {
     },
 }
 
-# Offered only when Meeting Memory is enabled for the account — gated at runtime
+# Offered only when Meeting Memory is enabled for the account, gated at runtime
 # by meetings_enabled().
 VITY_MEETING_RECALL_SCHEMA = {
     "name": "vity_meeting_recall",
     "description": (
-        "Answer a question using the user's MEETING history — transcripts, decisions, "
+        "Answer a question using the user's MEETING history: transcripts, decisions, "
         "action items, attendees. Use for questions about what was discussed or decided "
         "in meetings, who attended, or what is still open."
     ),
@@ -397,7 +397,7 @@ def _is_placeholder(result: dict) -> bool:
     """True for the backend's synthesized non-memory results.
 
     ``search()`` sometimes returns a profile-summary blob (``type: "context"``)
-    or an "empty profile" sentinel instead of discrete stored memories — e.g.
+    or an "empty profile" sentinel instead of discrete stored memories, e.g.
     for short/low-signal queries. These are not real hits, so we drop them
     before injecting recall context (otherwise a fresh/sparse account injects
     "memory profile is empty" as if it were a memory). Matches the CLI's
@@ -433,14 +433,14 @@ class VityMemoryProvider(MemoryProvider):
         # Skip memory writes in non-primary contexts (cron/flush/subagent) so
         # automated runs don't corrupt the user's memory. Resolved in initialize().
         self._write_enabled = True
-        # Background threads (non-blocking pattern — REQUIRED by Hermes contract).
+        # Background threads (non-blocking pattern, REQUIRED by Hermes contract).
         # Recall runs synchronously per-turn in prefetch() against the current
         # message; only capture/sync runs in the background.
         self._prefetch_thread = None
         self._sync_thread = None
-        # First-turn flag — exempts the very first prompt from the min-length skip.
+        # First-turn flag, exempts the very first prompt from the min-length skip.
         self._cold_start = True
-        # Last SUBSTANTIAL user message — the anchor a short follow-up ("why?",
+        # Last SUBSTANTIAL user message, the anchor a short follow-up ("why?",
         # "tell me more") is enriched with before searching. Persists across a
         # chain of follow-ups; only a non-follow-up message overwrites it.
         self._prev_query = ""
@@ -475,14 +475,14 @@ class VityMemoryProvider(MemoryProvider):
 
     @property
     def name(self) -> str:
-        # Provider id — also the plugin folder name and the value shown in the
+        # Provider id, also the plugin folder name and the value shown in the
         # Hermes Desktop "Memory Provider" dropdown (rendered as "Maximem Vity").
         return "maximem_vity"
 
     # -- Availability (no network calls!) ------------------------------------
 
     def is_available(self) -> bool:
-        """Check config only — NO network calls allowed here."""
+        """Check config only, NO network calls allowed here."""
         cfg = _load_config()
         return bool(cfg.get("api_key"))
 
@@ -556,7 +556,7 @@ class VityMemoryProvider(MemoryProvider):
             session_id, self._auto_recall, self._auto_capture, self._write_enabled,
         )
 
-        # First turn of the session — exempt from the min-length recall skip.
+        # First turn of the session, exempt from the min-length recall skip.
         self._cold_start = True
         # Re-arm the one-time profile inject for this new session (the cached
         # profile text itself is preserved across sessions).
@@ -587,7 +587,7 @@ class VityMemoryProvider(MemoryProvider):
         from maximem_vity import VityClient
         # Declare the integration channel explicitly. `channel` participates in V4 conversation
         # identity server-side (chat_id = "{channel}:{sessionKey}"), and the SDK no longer defaults
-        # it to "hermes" — so Hermes must self-identify here rather than rely on the SDK default.
+        # it to "hermes", so Hermes must self-identify here rather than rely on the SDK default.
         kwargs: Dict[str, Any] = {"api_key": self._api_key, "channel": "hermes", "agent_id": "hermes"}
         if self._endpoint:
             kwargs["endpoint"] = self._endpoint
@@ -635,7 +635,7 @@ class VityMemoryProvider(MemoryProvider):
         Builds the short-timeout client and fires a tiny throwaway search so the
         SDK import, HTTP client, DNS, and TLS handshake are all paid off-turn.
         The first user turn then hits a warm connection (~2s) instead of a cold
-        one (~12s). Fully best-effort — any failure is ignored.
+        one (~12s). Fully best-effort: any failure is ignored.
         """
         try:
             self._get_recall_client().search(query="warmup", top_k=1)
@@ -655,11 +655,11 @@ class VityMemoryProvider(MemoryProvider):
     def _load_profile(self) -> None:
         """Warm-load a general 'who is this user' summary, off-turn.
 
-        Best-effort. Uses recall() (the synthesized-profile path — the right
+        Best-effort. Uses recall() (the synthesized-profile path, the right
         source for identity/interests/current work) on the main client's longer
         timeout, since this never runs on a critical path. Cached across sessions
         within ``_PROFILE_TTL_SECONDS`` so back-to-back sessions reuse it rather
-        than re-paying the call. A failure or empty result leaves no profile —
+        than re-paying the call. A failure or empty result leaves no profile;
         the session simply proceeds without one.
         """
         import time
@@ -668,7 +668,7 @@ class VityMemoryProvider(MemoryProvider):
         if self._profile_context and (
             time.monotonic() - self._profile_loaded_at
         ) < _PROFILE_TTL_SECONDS:
-            return  # fresh cache — reuse across sessions
+            return  # fresh cache, reuse across sessions
         try:
             context = self._get_client().recall(
                 current_prompt=_PROFILE_PROMPT,
@@ -695,8 +695,8 @@ class VityMemoryProvider(MemoryProvider):
         Uses ``search()`` (true semantic retrieval), drops the backend's
         synthesized placeholders, and dedupes the near-identical hits it
         sometimes returns for one memory. This is the retrieval that actually
-        surfaces specific stored items — the same call ``hermes maximem_vity search``
-        makes — as opposed to ``recall()``, whose synthesized profile reliably
+        surfaces specific stored items (the same call ``hermes maximem_vity search``
+        makes), as opposed to ``recall()``, whose synthesized profile reliably
         misses them.
 
         ``min_score`` is a relevance floor. It defaults to 0 (unfiltered) for
@@ -716,7 +716,7 @@ class VityMemoryProvider(MemoryProvider):
         return memories
 
     def _recall_for_injection(self, query: str, top_k: int = 10) -> str:
-        """Memories to inject for auto-recall, or "" — via search(), short timeout.
+        """Memories to inject for auto-recall, or "", via search(), short timeout.
 
         Sparse/cold accounts are handled by the SDK's own fallback: when the
         ``/search`` endpoint is empty, ``search()`` transparently pulls the
@@ -752,7 +752,7 @@ class VityMemoryProvider(MemoryProvider):
             try:
                 box["text"] = self._recall_for_injection(query)
             except Exception as e:
-                # Slow/unhealthy endpoint — degrade to no memory this turn.
+                # Slow/unhealthy endpoint, degrade to no memory this turn.
                 logger.debug("Vity prefetch retrieval failed (non-fatal): %s", e)
 
         worker = threading.Thread(target=_run, daemon=True, name="vity-recall")
@@ -784,7 +784,7 @@ class VityMemoryProvider(MemoryProvider):
         Runs a synchronous search against the current user message every turn.
         We do NOT rely on a background warm-up: the host warms with the
         *previous* turn's message (a query behind), and ``recall()``'s
-        synthesized profile misses specific stored items — the exact reason
+        synthesized profile misses specific stored items, the exact reason
         automatic recall silently returned nothing on sparse accounts. A live
         ``search()`` on the current message is what makes recall reliable.
         """
@@ -794,7 +794,7 @@ class VityMemoryProvider(MemoryProvider):
         if not self._auto_recall:
             return ""
 
-        # Anaphoric follow-up ("why?", "tell me more") — prepend the last
+        # Anaphoric follow-up ("why?", "tell me more"), prepend the last
         # substantial message so the search has a subject. Otherwise search the
         # message verbatim, and let THIS message become the anchor for future
         # follow-ups. Order matters: read the old anchor before overwriting it.
@@ -804,7 +804,7 @@ class VityMemoryProvider(MemoryProvider):
         if query.strip() and not is_followup:
             self._prev_query = query.strip()
 
-        # Skip trivially short prompts — but ONLY when we couldn't enrich them
+        # Skip trivially short prompts, but ONLY when we couldn't enrich them
         # with prior context (an augmented "why?" is worth searching).
         if (
             not augment
@@ -818,7 +818,7 @@ class VityMemoryProvider(MemoryProvider):
 
         self._cold_start = False
 
-        # Inject the general profile ONCE per session — the first turn it's
+        # Inject the general profile ONCE per session, the first turn it's
         # ready (the background warm-load may finish after turn 1, so this is
         # not tied to cold_start). Silent background context, kept separate from
         # the per-turn memory block.
@@ -844,7 +844,7 @@ class VityMemoryProvider(MemoryProvider):
         blocks: List[str] = []
         if inject_profile:
             blocks.append(
-                "## About the user (background context — use only if relevant, "
+                "## About the user (background context; use only if relevant, "
                 "do not recite verbatim)\n" + self._profile_context
             )
         if result:
@@ -865,12 +865,12 @@ class VityMemoryProvider(MemoryProvider):
         import time
         now = int(time.time() * 1000)
 
-        # Timing breakdown for the CLI feed — only when Vity actually retrieved.
+        # Timing breakdown for the CLI feed, only when Vity actually retrieved.
         if self._prefetch_done_at > 0:
             total_turn_ms = (time.perf_counter() - self._prefetch_done_at) * 1000
             vity_total_ms = self._vity_prefetch_ms + self._vity_tool_ms
             hermes_llm_ms = max(0.0, total_turn_ms - self._vity_tool_ms)
-            # Only render the timing line on a real terminal — on non-TTY
+            # Only render the timing line on a real terminal, on non-TTY
             # sinks (pipes, logs, messaging gateways) the ANSI escapes show up
             # as literal `?[2m…?[0m` garble.
             if self._vity_retrieved and sys.stdout.isatty():
@@ -916,7 +916,7 @@ class VityMemoryProvider(MemoryProvider):
                 # Forward-compatible observability: once the router returns a
                 # request_id AND maps the status route, poll it so a dropped
                 # extraction is visible instead of silent. Until then request_id
-                # is absent / capture_status 404s, and this block is a no-op —
+                # is absent / capture_status 404s, and this block is a no-op;
                 # behaviour identical to before. Never blocks the user (bg thread).
                 request_id = result.get("request_id") or result.get("requestId")
                 if request_id:
@@ -927,7 +927,7 @@ class VityMemoryProvider(MemoryProvider):
                         logger.debug("Vity capture status unavailable (%s)", se)
             except Exception as e:
                 logger.warning("Vity sync failed, retrying once: %s", e)
-                # One retry — a transient network blip should not silently lose a
+                # One retry, a transient network blip should not silently lose a
                 # turn. Still best-effort: a second failure is logged and dropped.
                 try:
                     self._get_client().capture(
@@ -1094,7 +1094,7 @@ class VityMemoryProvider(MemoryProvider):
                     # The backend can return several near-identical rows for one
                     # topic whose summaries differ by a few characters, so exact
                     # dedup misses them. Knowledge is already topic-consolidated, so collapse
-                    # to one row per topic — items arrive rank-ordered, so the
+                    # to one row per topic, items arrive rank-ordered, so the
                     # first is the best. Fall back to the summary as the key when
                     # a row carries no topic.
                     seen: set = set()

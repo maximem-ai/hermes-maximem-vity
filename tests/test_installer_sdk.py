@@ -99,7 +99,7 @@ def test_install_skips_when_already_importable(monkeypatch):
 
     monkeypatch.setattr(installer.subprocess, "run", fake_run)
     assert installer._install_sdk_into_hermes() is True
-    # Only the import probe ran — no `pip install`.
+    # Only the import probe ran, no `pip install`.
     assert len(calls) == 1
     assert any("import maximem_vity" in str(c) for c in calls)
     assert not any("install" in str(c) for c in calls)

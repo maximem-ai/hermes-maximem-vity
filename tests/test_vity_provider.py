@@ -174,8 +174,8 @@ def _provider_with_client(vity_module, monkeypatch, fake_client):
 
 def test_prefetch_uses_search_not_recall(vity_module, monkeypatch):
     # The bug: auto-recall used recall() (misses specific memories). It must
-    # use search() — the same call the vity_recall tool / `hermes vity search`
-    # make — so stored memories are injected automatically, every turn.
+    # use search() (the same call the vity_recall tool / `hermes vity search`
+    # make), so stored memories are injected automatically, every turn.
     fake_client = MagicMock()
     fake_client.search.return_value = [{"content": "User loves dark mode", "score": 0.9}]
     provider = _provider_with_client(vity_module, monkeypatch, fake_client)
@@ -189,7 +189,7 @@ def test_prefetch_uses_search_not_recall(vity_module, monkeypatch):
 
 
 def test_prefetch_never_calls_recall_endpoint(vity_module, monkeypatch):
-    # Auto-recall must NOT touch recall() — it's slow/unhealthy (times out in
+    # Auto-recall must NOT touch recall(), it's slow/unhealthy (times out in
     # prod) and misses specifics. Empty search → inject nothing this turn.
     fake_client = MagicMock()
     fake_client.search.return_value = []
@@ -231,7 +231,7 @@ def test_recall_client_built_with_short_timeout(vity_module, monkeypatch):
 
 def test_prefetch_skips_synthesized_placeholders(vity_module, monkeypatch):
     # A sparse/fresh account: search returns the "empty profile" sentinel and a
-    # profile-summary blob. Neither is a real memory, so nothing is injected —
+    # profile-summary blob. Neither is a real memory, so nothing is injected;
     # and we must NOT inject "memory profile is empty" as if it were a memory.
     fake_client = MagicMock()
     fake_client.search.return_value = [
@@ -268,7 +268,7 @@ def test_prefetch_caps_injected_context_to_max_recall_tokens(vity_module, monkey
 
 
 # --------------------------------------------------------------------------
-# #1 — writes must be skipped in non-primary (cron/flush/subagent) contexts
+# #1: writes must be skipped in non-primary (cron/flush/subagent) contexts
 # --------------------------------------------------------------------------
 
 def _init_with_stub_client(vity_module, monkeypatch, **init_kwargs):
@@ -316,13 +316,13 @@ def test_primary_context_keeps_writes_enabled(vity_module, monkeypatch):
 
 
 def test_no_context_defaults_to_writes_enabled(vity_module, monkeypatch):
-    # A plain CLI turn passes no agent_context — writes must stay on.
+    # A plain CLI turn passes no agent_context, writes must stay on.
     provider, _ = _init_with_stub_client(vity_module, monkeypatch)
     assert provider._write_enabled is True
 
 
 # --------------------------------------------------------------------------
-# #2 — cold-start warm-up + wall-clock recall deadline
+# #2: cold-start warm-up + wall-clock recall deadline
 # --------------------------------------------------------------------------
 
 def test_initialize_warms_recall_in_background(vity_module, monkeypatch):
@@ -350,7 +350,7 @@ def test_recall_deadline_caps_slow_prefetch(vity_module, monkeypatch):
 
 
 # --------------------------------------------------------------------------
-# #4 — honour the host-injected hermes_home
+# #4: honour the host-injected hermes_home
 # --------------------------------------------------------------------------
 
 def test_load_config_honors_explicit_hermes_home(vity_module, tmp_path):
@@ -363,7 +363,7 @@ def test_load_config_honors_explicit_hermes_home(vity_module, tmp_path):
 
 
 # --------------------------------------------------------------------------
-# #5 — on_session_switch re-arms cold_start only on a genuine reset
+# #5: on_session_switch re-arms cold_start only on a genuine reset
 # --------------------------------------------------------------------------
 
 def test_session_reset_rearms_cold_start(vity_module):
@@ -381,7 +381,7 @@ def test_session_resume_keeps_cold_start_off(vity_module):
 
 
 # --------------------------------------------------------------------------
-# #6 — timing line is suppressed on non-TTY sinks (no ANSI garble)
+# #6: timing line is suppressed on non-TTY sinks (no ANSI garble)
 # --------------------------------------------------------------------------
 
 def test_timing_line_suppressed_when_not_a_tty(vity_module, monkeypatch, capsys):
@@ -398,7 +398,7 @@ def test_timing_line_suppressed_when_not_a_tty(vity_module, monkeypatch, capsys)
 
 
 # --------------------------------------------------------------------------
-# #8 — store dispatch tolerates a None result from the SDK
+# #8: store dispatch tolerates a None result from the SDK
 # --------------------------------------------------------------------------
 
 def test_store_tolerates_none_result(vity_module, monkeypatch):
@@ -416,8 +416,8 @@ def test_store_tolerates_none_result(vity_module, monkeypatch):
 
 def test_knowledge_dispatch_dedupes_by_topic(vity_module, monkeypatch):
     # The backend can return several near-identical rows for one
-    # topic (summaries differing by a few chars). Collapse to one per topic —
-    # the first (rank-ordered) wins — so the agent isn't handed repeats.
+    # topic (summaries differing by a few chars). Collapse to one per topic;
+    # the first (rank-ordered) wins, so the agent isn't handed repeats.
     fake_client = MagicMock()
     fake_client.knowledge.return_value = {"items": [
         {"topic": "astronomy", "topic_category": "science", "summary": "likes stars"},
@@ -447,7 +447,7 @@ def test_prefetch_applies_min_score_floor(vity_module, monkeypatch):
 
 
 def test_vity_recall_tool_stays_unfiltered(vity_module, monkeypatch):
-    # The explicit tool is an agent-driven request — it must NOT apply the
+    # The explicit tool is an agent-driven request, it must NOT apply the
     # auto-recall floor (min_score defaults to 0 there).
     fake_client = MagicMock()
     fake_client.search.return_value = [{"content": "a niche fact", "score": 0.15}]
@@ -476,7 +476,7 @@ def test_needs_prior_context_classifier(vity_module):
     assert needs("what about that?")
     assert needs("how does it work?")
     assert needs("the second one")
-    # Self-contained messages — must NOT augment (no dilution of clean topics):
+    # Self-contained messages, must NOT augment (no dilution of clean topics):
     assert not needs("what's my sister's birthday?")
     assert not needs("I love Python")
     assert not needs("remind me about the database migration schedule")
@@ -517,8 +517,8 @@ def test_prefetch_anchor_persists_across_followup_chain(vity_module, monkeypatch
     provider = _provider_with_client(vity_module, monkeypatch, fake_client)
 
     provider.prefetch("what did we decide about the Postgres migration?")
-    provider.prefetch("tell me more")   # follow-up 1 — must NOT overwrite the anchor
-    provider.prefetch("why?")           # follow-up 2 — still anchored to Postgres
+    provider.prefetch("tell me more")   # follow-up 1, must NOT overwrite the anchor
+    provider.prefetch("why?")           # follow-up 2, still anchored to Postgres
 
     third_query = fake_client.search.call_args_list[2].kwargs["query"]
     assert "Postgres migration" in third_query

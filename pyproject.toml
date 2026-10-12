@@ -34,7 +34,7 @@ hermes-maximem-vity = "hermes_maximem_vity.installer:main"
 [tool.setuptools.packages.find]
 where = ["src"]
 
-# The plugin files are shipped as data (not imported by this package — they
+# The plugin files are shipped as data (not imported by this package; they
 # import Hermes host modules and only run inside the Hermes process).
 [tool.setuptools.package-data]
 hermes_maximem_vity = ["payload/*"]
