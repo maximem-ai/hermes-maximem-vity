@@ -20,7 +20,7 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
 def _install_host_stubs(home: Path) -> None:
-    # agent.memory_provider.MemoryProvider — minimal base class.
+    # agent.memory_provider.MemoryProvider, minimal base class.
     agent_pkg = types.ModuleType("agent")
     mem_mod = types.ModuleType("agent.memory_provider")
 

@@ -1,4 +1,4 @@
-"""``hermes-maximem-vity`` console script — install/uninstall the Vity plugin.
+"""``hermes-maximem-vity`` console script: install/uninstall the Vity plugin.
 
 A plain ``pip install`` lands this package in site-packages, but Hermes
 discovers memory providers from ``$HERMES_HOME/plugins/<name>/``. This command
@@ -30,6 +30,7 @@ _LEGACY_PLUGIN_NAME = "vity"
 # payload filename -> installed filename in ~/.hermes/plugins/maximem_vity/
 _FILES = {
     "provider.py": "__init__.py",   # the MemoryProvider Hermes loads
+    "analytics.py": "analytics.py", # best-effort usage telemetry helper
     "cli.py": "cli.py",             # the `hermes maximem_vity` subcommands
     "plugin.yaml": "plugin.yaml",   # manifest (deps, required env)
     "vity.json.example": "vity.json.example",
@@ -62,23 +63,29 @@ def _env_path() -> Path:
     return _hermes_home() / ".env"
 
 
-def _key_already_set() -> bool:
-    """True if MAXIMEM_API_KEY (or VITY_API_KEY) is set in env or ~/.hermes/.env."""
-    if os.environ.get("MAXIMEM_API_KEY") or os.environ.get("VITY_API_KEY"):
-        return True
+def _existing_key() -> str:
+    """MAXIMEM_API_KEY (or VITY_API_KEY) from env or ~/.hermes/.env, else ""."""
+    key = os.environ.get("MAXIMEM_API_KEY") or os.environ.get("VITY_API_KEY")
+    if key:
+        return key
     env = _env_path()
     if env.exists():
         for line in env.read_text(errors="replace").splitlines():
             s = line.strip()
             if s.startswith(("MAXIMEM_API_KEY=", "VITY_API_KEY=")) and s.split("=", 1)[1].strip():
-                return True
-    return False
+                return s.split("=", 1)[1].strip()
+    return ""
+
+
+def _key_already_set() -> bool:
+    """True if MAXIMEM_API_KEY (or VITY_API_KEY) is set in env or ~/.hermes/.env."""
+    return bool(_existing_key())
 
 
 def _write_api_key(key: str) -> None:
     """Write MAXIMEM_API_KEY to ~/.hermes/.env, replacing any existing line.
 
-    Dedupes — never appends a second MAXIMEM_API_KEY (the common copy-paste bug).
+    Dedupes, never appends a second MAXIMEM_API_KEY (the common copy-paste bug).
     """
     env = _env_path()
     env.parent.mkdir(parents=True, exist_ok=True)
@@ -113,7 +120,7 @@ def _ensure_api_key(api_key: str | None) -> bool:
     if _key_already_set():
         print("✓ MAXIMEM_API_KEY already configured (pass --api-key mx_… to change it)")
         return True
-    # Prompt only on a real terminal — never hang on piped/buffered input.
+    # Prompt only on a real terminal, never hang on piped/buffered input.
     if sys.stdin.isatty() and sys.stdout.isatty():
         try:
             entered = input("\nPaste your Maximem API key (mx_…) or press Enter to skip: ").strip()
@@ -127,7 +134,7 @@ def _ensure_api_key(api_key: str | None) -> bool:
 
 
 def _venv_python(venv_dir: Path) -> Path:
-    """Python interpreter inside a venv — Windows: ``Scripts\\python.exe``; else ``bin/python``."""
+    """Python interpreter inside a venv. Windows: ``Scripts\\python.exe``; else ``bin/python``."""
     if os.name == "nt":
         return venv_dir / "Scripts" / "python.exe"
     return venv_dir / "bin" / "python"
@@ -137,7 +144,7 @@ def _hermes_python() -> str | None:
     """Resolve the Python interpreter that the ``hermes`` runtime actually uses.
 
     The Vity plugin runs *inside* the Hermes process, which normally lives in
-    its own isolated virtualenv (``<HERMES_HOME>/hermes-agent/venv``) — NOT the
+    its own isolated virtualenv (``<HERMES_HOME>/hermes-agent/venv``), NOT the
     interpreter that ran ``pip install hermes-maximem-vity`` (often Anaconda base
     or the system Python). The SDK must be importable by *Hermes'* interpreter,
     so we resolve it here, cross-platform: Windows uses ``venv\\Scripts\\python.exe``,
@@ -176,11 +183,26 @@ def _hermes_python() -> str | None:
     return None
 
 
+# Run inside Hermes' interpreter: exits 0 only if the SDK imports AND is >= 0.3.0.
+# A bare import check let an old 0.2.x SDK pass, and the plugin then silently lost
+# recall (0.2.x lacks knowledge(), meetings_enabled(), per-call capture channel).
+_SDK_PROBE = (
+    "import maximem_vity, sys, importlib.metadata as m; "
+    "v = tuple(int(x) for x in m.version('maximem-vity-sdk').split('.')[:2]); "
+    "sys.exit(0 if v >= (0, 3) else 1)"
+)
+
+
+def _sdk_ok(py: str) -> bool:
+    """True when Hermes' interpreter imports a compatible (>=0.3.0) SDK."""
+    return subprocess.run([py, "-c", _SDK_PROBE], capture_output=True).returncode == 0
+
+
 def _install_sdk_into_hermes() -> bool:
     """Install ``maximem-vity-sdk`` into the interpreter that runs Hermes.
 
     This is the step a plain ``pip install`` cannot do: the SDK is a dependency
-    of *this* package, so it lands in whatever Python ran pip — but Hermes runs
+    of *this* package, so it lands in whatever Python ran pip, but Hermes runs
     elsewhere. We target Hermes' own interpreter, bootstrapping pip via
     ``ensurepip`` if the venv was created without it. Best-effort: returns False
     (with a clear manual fallback printed by the caller) if it can't be done.
@@ -189,11 +211,12 @@ def _install_sdk_into_hermes() -> bool:
     if not py:
         return False
 
-    # Already importable by Hermes? Nothing to do.
-    if subprocess.run([py, "-c", "import maximem_vity"], capture_output=True).returncode == 0:
+    # Compatible SDK already importable by Hermes? Nothing to do. An older SDK
+    # fails the probe and falls through to the pip install below, which upgrades it.
+    if _sdk_ok(py):
         return True
 
-    print("  installing maximem-vity-sdk into Hermes' environment (one-time)…")
+    print("  installing/upgrading maximem-vity-sdk (>=0.3.0) in Hermes' environment…")
 
     # Make sure pip exists in that interpreter (venvs are often built without it).
     if subprocess.run([py, "-m", "pip", "--version"], capture_output=True).returncode != 0:
@@ -201,7 +224,7 @@ def _install_sdk_into_hermes() -> bool:
 
     try:
         proc = subprocess.run(
-            [py, "-m", "pip", "install", "maximem-vity-sdk>=0.2.3,<1"],
+            [py, "-m", "pip", "install", "maximem-vity-sdk>=0.3.0,<1"],
             capture_output=True, timeout=300,
         )
     except Exception:
@@ -210,7 +233,7 @@ def _install_sdk_into_hermes() -> bool:
         return False
 
     # Verify the import really works now (not just that pip exited 0).
-    return subprocess.run([py, "-c", "import maximem_vity"], capture_output=True).returncode == 0
+    return _sdk_ok(py)
 
 
 def _activate_provider() -> bool:
@@ -237,7 +260,7 @@ def _activate_provider() -> bool:
 def cmd_install(force: bool = False, api_key: str | None = None) -> int:
     payload = _payload_dir()
     if not payload.is_dir():
-        print(f"✗ payload not found at {payload} — broken install?", file=sys.stderr)
+        print(f"✗ payload not found at {payload}. Is the install broken?", file=sys.stderr)
         return 1
     target = _target_dir()
     target.mkdir(parents=True, exist_ok=True)
@@ -250,7 +273,7 @@ def cmd_install(force: bool = False, api_key: str | None = None) -> int:
             shutil.rmtree(legacy)
             print(f"✓ Removed legacy plugin folder {legacy}")
         except Exception:
-            print(f"  (note: couldn't remove old {legacy} — delete it manually)")
+            print(f"  (note: couldn't remove old {legacy}; delete it manually)")
 
     copied = 0
     for src_name, dst_name in _FILES.items():
@@ -268,13 +291,13 @@ def cmd_install(force: bool = False, api_key: str | None = None) -> int:
 
     # 1) Install the SDK into Hermes' OWN interpreter. A plain `pip install`
     #    put the SDK in whatever Python ran it (often Anaconda/system), but
-    #    Hermes runs in its own venv and imports `maximem_vity` there — without
+    #    Hermes runs in its own venv and imports `maximem_vity` there, without
     #    this step it reports "maximem-vity-sdk not installed" despite pip.
     sdk_ok = _install_sdk_into_hermes()
     if sdk_ok:
         print("✓ SDK available to Hermes (maximem-vity-sdk)")
 
-    # 2) API key (flag > already-set > prompt) — written deduped to ~/.hermes/.env
+    # 2) API key (flag > already-set > prompt), written deduped to ~/.hermes/.env
     key_ok = _ensure_api_key(api_key)
 
     # 3) Activate non-interactively (avoids the fragile `hermes memory setup` wizard)
@@ -282,19 +305,19 @@ def cmd_install(force: bool = False, api_key: str | None = None) -> int:
     if activated:
         print(f"✓ Activated: memory.provider = {PLUGIN_NAME}")
 
-    # 4) Clear, honest summary — no guesswork for the user
+    # 4) Clear, honest summary, no guesswork for the user
     print("\n" + "─" * 52)
     if key_ok and activated and sdk_ok:
         print("✅ All set! Vity memory is active.")
         print("   Start Hermes:   hermes")
         print("   Check it:       hermes maximem_vity status")
     else:
-        print("Almost done — finish these:")
+        print("Almost done. Finish these steps:")
         if not sdk_ok:
             hpy = _hermes_python()
             target_py = hpy or "<your hermes venv python>"
             print("  • Install the SDK into Hermes' interpreter:")
-            print(f"      {target_py} -m pip install 'maximem-vity-sdk>=0.2.3,<1'")
+            print(f"      {target_py} -m pip install 'maximem-vity-sdk>=0.3.0,<1'")
         if not key_ok:
             print("  • Add your API key:")
             print("      echo 'MAXIMEM_API_KEY=mx_...' >> ~/.hermes/.env")
@@ -302,10 +325,36 @@ def cmd_install(force: bool = False, api_key: str | None = None) -> int:
         if not activated:
             print("  • Activate the provider (hermes wasn't on PATH):")
             print(f"      hermes config set memory.provider {PLUGIN_NAME}")
-            print("      (not the interactive `hermes memory setup` — it can drop the selection)")
+            print("      (not the interactive `hermes memory setup`, which can drop the selection)")
         print("  Then:  hermes maximem_vity status")
     print("─" * 52)
+
+    # Top-of-funnel analytics. Loaded from the payload (stdlib-only, best-effort)
+    # and sent inline because this process is about to exit. Skipped when the
+    # user opted out or no API key is configured; never fails the install.
+    _track_install(sdk_ok=sdk_ok, key_ok=key_ok, activated=activated, api_key=api_key)
     return 0
+
+
+def _track_install(*, sdk_ok: bool, key_ok: bool, activated: bool, api_key: str | None) -> None:
+    """Fire the ``plugin_installed`` event via the payload's analytics helper."""
+    try:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "vity_analytics_installer", _payload_dir() / "analytics.py"
+        )
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        mod.track(
+            "plugin_installed",
+            # Fall back to the configured key: an update/re-install passes no
+            # --api-key, and without a key the event can't authenticate (skipped).
+            api_key=api_key or _existing_key(),
+            props={"sdk_ok": sdk_ok, "key_ok": key_ok, "activated": activated},
+            block=True,
+        )
+    except Exception:
+        pass
 
 
 def cmd_uninstall() -> int:
@@ -330,10 +379,8 @@ def cmd_status() -> int:
     if not py:
         print("  SDK:      hermes interpreter not found (run `hermes` once?)")
     else:
-        importable = subprocess.run(
-            [py, "-c", "import maximem_vity"], capture_output=True
-        ).returncode == 0
-        print(f"  SDK:      {'available to Hermes ✓' if importable else 'NOT importable by Hermes ✗ — run: hermes-maximem-vity install'}")
+        ok = _sdk_ok(py)
+        print(f"  SDK:      {'>=0.3.0 available to Hermes ✓' if ok else 'missing or older than 0.3.0 ✗ (run: hermes-maximem-vity install)'}")
     return 0
 
 
@@ -346,7 +393,7 @@ def main(argv=None) -> int:
     p_install = sub.add_parser("install", help="Install + activate the plugin (one command)")
     p_install.add_argument("--force", action="store_true", help="Overwrite an existing install")
     p_install.add_argument("--api-key", metavar="mx_…", default=None,
-                           help="Maximem API key — saved to ~/.hermes/.env (deduped)")
+                           help="Maximem API key, saved to ~/.hermes/.env (deduped)")
     sub.add_parser("uninstall", help="Remove the plugin from ~/.hermes/plugins/maximem_vity/")
     sub.add_parser("status", help="Show install location and state")
 

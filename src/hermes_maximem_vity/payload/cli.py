@@ -1,4 +1,4 @@
-"""``hermes maximem_vity`` CLI subcommands — terminal memory management.
+"""``hermes maximem_vity`` CLI subcommands: terminal memory management.
 
 Auto-wired by the host's ``discover_plugin_cli_commands()`` when
 ``memory.provider`` is set to ``maximem_vity``:
@@ -113,10 +113,10 @@ def _cmd_status() -> None:
 
     # Surface the two blockers cleanly instead of failing mid-connection.
     if not sdk_ok:
-        print("\n  ⚠ SDK missing — run:  hermes-maximem-vity install")
+        print("\n  ⚠ SDK missing. Run:  hermes-maximem-vity install")
         return
     if not has_key:
-        print("\n  ⚠ API key missing — run:  hermes-maximem-vity install")
+        print("\n  ⚠ API key missing. Run:  hermes-maximem-vity install")
         return
 
     # Live connection check.
@@ -124,6 +124,15 @@ def _cmd_status() -> None:
         client = _make_client()
         client.search(query="connection check", top_k=1)
         print(_row("connection", "ok ✓"))
+        # Prefer a real memory count when the router exposes /stats; fall back
+        # silently to the connection check above until that route ships (404).
+        try:
+            stats = client.stats() or {}
+            total = stats.get("total", stats.get("count"))
+            if total is not None:
+                print(_row("memories", str(total)))
+        except Exception:
+            pass
         client.close()
     except Exception as e:
         print(_row("connection", f"failed ✗ ({e})"))
@@ -134,7 +143,7 @@ def _is_placeholder(result: dict) -> bool:
 
     The API sometimes returns a profile-summary blob (``type: "context"``) or an
     "empty profile" sentinel (``type: null`` with a fixed message) instead of
-    discrete stored memories — e.g. for short/low-signal queries. These are not
+    discrete stored memories, e.g. for short/low-signal queries. These are not
     real hits, so the human-readable ``search`` view treats them as "no results".
     Real memories can also carry ``type: null``, so we match the sentinel by its
     content, not by type alone.
@@ -162,7 +171,7 @@ def _cmd_search(query: str, limit: int, as_json: bool) -> None:
     shown = 0
     for r in results:
         # Skip the backend's synthesized placeholders (profile-summary blob /
-        # "empty profile" sentinel) — not discrete stored memories.
+        # "empty profile" sentinel), not discrete stored memories.
         # `--json` still shows everything for power users.
         if _is_placeholder(r):
             continue
@@ -197,7 +206,7 @@ def _cmd_forget(query: str, confirm: bool) -> None:
     noun = "memory" if count == 1 else "memories"
     if not confirm:
         if count == 0:
-            print("Nothing matches — no memories to delete.")
+            print("No matching memories to delete.")
         else:
             print(f"Would delete {count} {noun}. Re-run with --yes to confirm.")
     else:

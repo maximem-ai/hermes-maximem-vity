@@ -1,4 +1,4 @@
-"""Tests for the ``hermes maximem_vity`` CLI rendering — clean, predictable output.
+"""Tests for the ``hermes maximem_vity`` CLI rendering: clean, predictable output.
 
 The CLI module (payload/cli.py) is loaded by file path: at runtime it lives in
 ``~/.hermes/plugins/maximem_vity/cli.py`` and only imports the host lazily, so it loads
@@ -75,7 +75,7 @@ def test_search_hides_empty_profile_sentinel(cli, monkeypatch, capsys):
 
 
 def test_search_shows_real_typeless_memories(cli, monkeypatch, capsys):
-    """Real memories can have type=null — those must NOT be filtered out."""
+    """Real memories can have type=null; those must NOT be filtered out."""
     monkeypatch.setattr(
         cli, "_make_client",
         lambda: _fake_client(search=lambda **_: [
@@ -122,7 +122,7 @@ def test_search_json_is_unfiltered(cli, monkeypatch, capsys):
         (2, True, "Deleted 2 memories."),
         (1, False, "Would delete 1 memory."),
         (3, False, "Would delete 3 memories."),
-        (0, False, "Nothing matches — no memories to delete."),
+        (0, False, "No matching memories to delete."),
     ],
 )
 def test_forget_messages(cli, monkeypatch, capsys, count, confirm, expected):

@@ -13,7 +13,7 @@ venv/
 .coverage
 htmlcov/
 
-# Local config copied from the .example on install — never commit secrets
+# Local config copied from the .example on install, never commit secrets
 vity.json
 .env
 
