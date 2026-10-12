@@ -415,7 +415,7 @@ def test_store_tolerates_none_result(vity_module, monkeypatch):
 # ---------------------------------------------------------------------------
 
 def test_knowledge_dispatch_dedupes_by_topic(vity_module, monkeypatch):
-    # Observed live: the backend returns several near-identical rows for one
+    # The backend can return several near-identical rows for one
     # topic (summaries differing by a few chars). Collapse to one per topic —
     # the first (rank-ordered) wins — so the agent isn't handed repeats.
     fake_client = MagicMock()
@@ -549,7 +549,7 @@ def test_session_reset_clears_anchor(vity_module):
 
 
 # ---------------------------------------------------------------------------
-# Option B: session-start user-profile warm-load + one-time injection
+# Session-start user-profile warm-load + one-time injection
 # ---------------------------------------------------------------------------
 
 def test_load_profile_caches_recall_summary(vity_module, monkeypatch):

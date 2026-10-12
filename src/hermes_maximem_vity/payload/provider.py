@@ -68,7 +68,7 @@ _DEFAULT_RECALL_DEADLINE = 3.0
 # explicit agent request) stays unfiltered. 0.3 matches the knowledge endpoint's
 # own cosine floor.
 _DEFAULT_RECALL_MIN_SCORE = 0.3
-# Session-start profile warm-load (Option B): off-turn, fetch a general
+# Session-start profile warm-load: off-turn, fetch a general
 # "who is this user" summary and inject it ONCE per session, the first turn it's
 # ready, as silent background context. recall() is the synthesized-profile path
 # — the right source for identity / interests / current work. Cached across
@@ -76,11 +76,9 @@ _DEFAULT_RECALL_MIN_SCORE = 0.3
 _DEFAULT_WARM_PROFILE = True
 _PROFILE_TTL_SECONDS = 3600.0
 _PROFILE_MAX_CHARS = 1200
-# Chosen by benchmarking candidate prompts against the live recall endpoint: a
-# broad keyword query retrieved the fullest, most CONSISTENT profile (18 facts,
-# all of identity/role/projects/preferences on every run) where natural-language
-# phrasings were either thinner or erratic. recall() embeds it as a bag of terms,
-# so wide keyword coverage maps to wide profile coverage.
+# A broad keyword query returns a fuller, more consistent profile than a
+# natural-language phrasing: recall() embeds it as a bag of terms, so wide
+# keyword coverage maps to wide profile coverage.
 _PROFILE_PROMPT = (
     "user identity name role work projects skills "
     "interests preferences hobbies goals"
@@ -231,8 +229,8 @@ VITY_KNOWLEDGE_SCHEMA = {
     },
 }
 
-# Router route not yet live (backend endpoint exists). Advertised only when the
-# gateway maps /v1/memory/meetings/ask — gated at runtime by meetings_enabled().
+# Offered only when Meeting Memory is enabled for the account — gated at runtime
+# by meetings_enabled().
 VITY_MEETING_RECALL_SCHEMA = {
     "name": "vity_meeting_recall",
     "description": (
@@ -282,7 +280,7 @@ VITY_DELETE_SCHEMA = {
     },
 }
 
-# Always-on tools. knowledge is LIVE on the router today, so it ships here.
+# Always-on tools.
 ALL_TOOL_SCHEMAS = [
     VITY_RECALL_SCHEMA,
     VITY_PROFILE_SCHEMA,
@@ -291,9 +289,9 @@ ALL_TOOL_SCHEMAS = [
     VITY_KNOWLEDGE_SCHEMA,
 ]
 
-# Flip to True once the router maps GET/PUT/DELETE /v1/memory/{id} onto the
-# backend's /memories/{id}. Until then vity_update/vity_delete would only 404,
-# so we don't advertise them to the agent (the dispatch handlers already exist).
+# Edit/delete-by-id endpoints are not yet available on the public API, so
+# vity_update/vity_delete are not advertised to the agent (the dispatch handlers
+# already exist). Flip to True once the endpoints ship.
 _ROUTER_CRUD_LIVE = False
 
 
@@ -335,8 +333,8 @@ def _load_config(hermes_home: str | None = None) -> dict:
             or os.environ.get("VITY_API_KEY")  # backward compat
             or ""
         ),
-        # Optional endpoint override — point at a self-hosted / local Maximem
-        # backend (e.g. http://localhost:8083). Empty = SDK default (prod).
+        # Optional endpoint override for a self-hosted Maximem backend.
+        # Empty = SDK default.
         "endpoint": (
             os.environ.get("MAXIMEM_ENDPOINT")
             or os.environ.get("MAXIMEM_API_URL")
@@ -446,7 +444,7 @@ class VityMemoryProvider(MemoryProvider):
         # "tell me more") is enriched with before searching. Persists across a
         # chain of follow-ups; only a non-follow-up message overwrites it.
         self._prev_query = ""
-        # Session-start profile (Option B). The profile text is cached across
+        # Session-start profile. The profile text is cached across
         # sessions (TTL); the injected-flag is per session so it shows once.
         self._warm_profile = _DEFAULT_WARM_PROFILE
         self._profile_context = ""
@@ -459,13 +457,13 @@ class VityMemoryProvider(MemoryProvider):
         self._vity_retrieved = False         # did this turn actually pull memory?
         # Whether Meeting Memory is enabled for this account. Probed off-turn in
         # _warm_recall() so it costs nothing on the critical path; defaults False
-        # so the meeting tool is hidden until the backend/router confirm support.
+        # so the meeting tool is hidden until the account confirms support.
         self._meetings_enabled = False
 
     # -- Analytics (best-effort, never fatal) --------------------------------
 
     def _track(self, event: str, props: Dict[str, Any] | None = None) -> None:
-        """Emit a PostHog event keyed by the hashed API key. No-op if unconfigured."""
+        """Send a usage telemetry event. No-op if opted out or no API key."""
         if _analytics is None:
             return
         try:
@@ -644,15 +642,14 @@ class VityMemoryProvider(MemoryProvider):
         except Exception as e:
             logger.debug("Vity recall warm-up skipped (non-fatal): %s", e)
         # Probe meeting-memory availability off-turn. meetings_enabled() degrades
-        # to False on any error (including the 404 that stands in until the router
-        # route ships), so this never raises and the meeting tool stays hidden
-        # until the account genuinely supports it.
+        # to False on any error, so this never raises and the meeting tool stays
+        # hidden until the account genuinely supports it.
         try:
             self._meetings_enabled = self._get_client().meetings_enabled()
         except Exception as e:
             logger.debug("Vity meetings probe skipped (non-fatal): %s", e)
         # Off-turn: warm-load the general user profile for a one-time,
-        # session-start injection (Option B).
+        # session-start injection.
         self._load_profile()
 
     def _load_profile(self) -> None:
@@ -1094,10 +1091,9 @@ class VityMemoryProvider(MemoryProvider):
                     items = (resp or {}).get("items", [])
                     if not items:
                         return json.dumps({"result": "No relevant knowledge found."})
-                    # The backend returns several near-identical rows for one
-                    # topic (observed live: 3 "dual-retrieval merge" hits whose
-                    # summaries differed by a few chars, so exact dedup misses
-                    # them). Knowledge is already topic-consolidated, so collapse
+                    # The backend can return several near-identical rows for one
+                    # topic whose summaries differ by a few characters, so exact
+                    # dedup misses them. Knowledge is already topic-consolidated, so collapse
                     # to one row per topic — items arrive rank-ordered, so the
                     # first is the best. Fall back to the summary as the key when
                     # a row carries no topic.

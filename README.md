@@ -59,6 +59,8 @@ pip install -U hermes-maximem-vity
 hermes-maximem-vity install
 ```
 
+Re-running `install` is required: it refreshes the plugin files Hermes loads and upgrades `maximem-vity-sdk` in the Hermes environment if needed. Your API key and `vity.json` settings are kept. Restart Hermes afterwards.
+
 ### Remove
 
 ```bash
@@ -113,7 +115,8 @@ Tunables (optional, non-secret, stored in `$HERMES_HOME/vity.json`, created on i
 | `auto_capture` | `true` | Capture the conversation after each turn. |
 | `max_recall_tokens` | `1000` | Size cap for the injected recall context. |
 | `min_prompt_length` | `5` | Skip recall for very short prompts. |
-| `recall_timeout` | `6.0` | Maximum seconds to wait for pre-turn recall. |
+| `recall_timeout` | `6.0` | Maximum seconds for a single pre-turn recall request. |
+| `recall_deadline` | `3.0` | Maximum total seconds pre-turn recall may take before the turn proceeds without memory. |
 | `recall_min_score` | `0.3` | Minimum relevance for an auto-injected memory. |
 | `profile_warmup` | `true` | Load a short user profile at session start and inject it once. |
 
@@ -125,13 +128,13 @@ The plugin sends anonymous usage events (install, session start, recall latency 
 
 ## How it works
 
-- **Recall before each turn.** A semantic search runs against the current message. If it returns within `recall_timeout` (default 6 seconds), the matches are injected as context; otherwise the turn proceeds with no memory rather than waiting. Only matches above `recall_min_score` are injected, so weak matches are not presented as fact.
+- **Recall before each turn.** A semantic search runs against the current message. If it completes within `recall_deadline` (default 3 seconds), the matches are injected as context; otherwise the turn proceeds with no memory rather than waiting. Only matches above `recall_min_score` are injected, so weak matches are not presented as fact.
 - **Follow-up resolution.** A short follow-up such as "why?" or "tell me more" has no subject of its own to search on. The plugin detects these and prepends the last substantial message, so the search still finds the right memories. Self-contained messages are searched verbatim, so a clean topic change is never diluted.
 - **Profile at session start.** When `profile_warmup` is on, a short "who is this user" summary is loaded off-turn and injected once at the start of a session as background context. It is cached across sessions for an hour to avoid repeated calls.
 - **Capture after each turn.** The user and assistant exchange is saved to long-term memory on a background thread.
 - **Memory mirroring.** When the Hermes built-in memory tool records a fact, it is also stored in Vity so it participates in semantic recall.
 
-Recall runs synchronously on the pre-turn path but is bounded by `recall_timeout`, so a slow or unhealthy backend degrades to no memory for that turn instead of hanging. Capture, mirroring, and profile warm-load run on background threads and never block the reply.
+Recall runs synchronously on the pre-turn path but is bounded by `recall_deadline`, so a slow or unhealthy backend degrades to no memory for that turn instead of hanging. Capture, mirroring, and profile warm-load run on background threads and never block the reply.
 
 ## Agent tools
 
@@ -180,6 +183,7 @@ Tests stub the Hermes host modules (`agent.memory_provider`, `tools.registry`, `
 | `src/hermes_maximem_vity/installer.py` | The `hermes-maximem-vity` console command (`install`, `uninstall`, `status`). |
 | `src/hermes_maximem_vity/payload/provider.py` | `VityMemoryProvider` and `register()`, copied to `~/.hermes/plugins/maximem_vity/__init__.py` on install. |
 | `src/hermes_maximem_vity/payload/cli.py` | The `hermes maximem_vity ...` subcommands. |
+| `src/hermes_maximem_vity/payload/analytics.py` | Usage telemetry (see [Usage telemetry](#usage-telemetry)). |
 | `src/hermes_maximem_vity/payload/plugin.yaml` | Plugin manifest (dependencies, required env). |
 | `src/hermes_maximem_vity/payload/vity.json.example` | Tunables template, seeded to `vity.json` on install. |
 | `tests/` | Unit tests and host-module stubs. |

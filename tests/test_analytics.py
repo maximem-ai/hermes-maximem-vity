@@ -79,11 +79,11 @@ def test_sends_to_router_telemetry_not_posthog(analytics, monkeypatch):
 
 
 def test_respects_custom_endpoint(analytics, monkeypatch):
-    monkeypatch.setenv("MAXIMEM_ENDPOINT", "https://staging.maximem.ai/")
+    monkeypatch.setenv("MAXIMEM_ENDPOINT", "https://memory.example.com/")
     sent = []
     monkeypatch.setattr(analytics, "_send", lambda url, key, body: sent.append(url))
     analytics.track("x", api_key="mx_key", block=True)
-    assert sent == ["https://staging.maximem.ai/v1/telemetry"]
+    assert sent == ["https://memory.example.com/v1/telemetry"]
 
 
 def test_body_never_contains_key_or_phc(analytics, monkeypatch):
@@ -110,7 +110,7 @@ def test_body_never_contains_key_or_phc(analytics, monkeypatch):
 
 
 def test_send_sets_explicit_user_agent(analytics, monkeypatch):
-    # Cloudflare 403s urllib's default "Python-urllib" agent, silently dropping events.
+    # The API edge 403s urllib's default "Python-urllib" agent, silently dropping events.
     sent = {}
 
     class _Resp:

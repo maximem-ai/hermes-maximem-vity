@@ -30,7 +30,7 @@ _LEGACY_PLUGIN_NAME = "vity"
 # payload filename -> installed filename in ~/.hermes/plugins/maximem_vity/
 _FILES = {
     "provider.py": "__init__.py",   # the MemoryProvider Hermes loads
-    "analytics.py": "analytics.py", # best-effort PostHog analytics helper
+    "analytics.py": "analytics.py", # best-effort usage telemetry helper
     "cli.py": "cli.py",             # the `hermes maximem_vity` subcommands
     "plugin.yaml": "plugin.yaml",   # manifest (deps, required env)
     "vity.json.example": "vity.json.example",
@@ -330,8 +330,8 @@ def cmd_install(force: bool = False, api_key: str | None = None) -> int:
     print("─" * 52)
 
     # Top-of-funnel analytics. Loaded from the payload (stdlib-only, best-effort)
-    # and sent inline because this process is about to exit. No-op unless a
-    # PostHog key is configured; never blocks or fails the install.
+    # and sent inline because this process is about to exit. Skipped when the
+    # user opted out or no API key is configured; never fails the install.
     _track_install(sdk_ok=sdk_ok, key_ok=key_ok, activated=activated, api_key=api_key)
     return 0
 

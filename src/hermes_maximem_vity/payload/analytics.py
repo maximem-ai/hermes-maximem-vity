@@ -78,9 +78,8 @@ def _send(url: str, api_key: str, payload: bytes) -> None:
                 # The user's own Maximem key authenticates the event, exactly as
                 # it does for memory calls. It travels in the header, never the body.
                 "Authorization": f"Bearer {api_key}",
-                # Cloudflare in front of the router rejects urllib's default
-                # "Python-urllib/x.y" agent with 403 (error 1010), which silently
-                # dropped every event. Any explicit agent passes.
+                # The API edge rejects urllib's default "Python-urllib/x.y"
+                # agent with 403, which would silently drop every event.
                 "User-Agent": f"hermes-maximem-vity/{PLUGIN_VERSION}",
             },
         )
