@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.4.0
+
+### Changed
+
+- The session-start profile and the `vity_profile` tool now use the user's **Profile Card**: name, role and company, location, education, expertise, skills, interests, active goals and preferences. It is the same resolved profile other Maximem products use, and it loads in milliseconds instead of running a memory search.
+- Only confident, current values are included. The email address and speculative values are never injected, and the block is never cut mid-item.
+- Requires `maximem-vity-sdk` 0.3.1 or newer. `hermes-maximem-vity install` upgrades an older SDK automatically.
+
+### Added
+
+- `profile_fields` on the `recall_performed` telemetry event: how many Profile Card fields were injected.
+
 ## 1.3.0
 
 ### Added

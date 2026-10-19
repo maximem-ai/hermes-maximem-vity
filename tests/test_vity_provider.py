@@ -98,7 +98,7 @@ def test_client_built_with_hermes_channel(vity_module, monkeypatch):
     provider._api_key = "mx_test_key"
     provider._get_client()
 
-    # SDK 0.3.0 defaults channel/agent_id to "unspecified"; Hermes must self-identify,
+    # SDK 0.3.x defaults channel/agent_id to "unspecified"; Hermes must self-identify,
     # since the server builds the conversation id as "{channel}:{sessionKey}".
     constructor.assert_called_once_with(api_key="mx_test_key", channel="hermes", agent_id="hermes")
 
@@ -552,26 +552,101 @@ def test_session_reset_clears_anchor(vity_module):
 # Session-start user-profile warm-load + one-time injection
 # ---------------------------------------------------------------------------
 
-def test_load_profile_caches_recall_summary(vity_module, monkeypatch):
+def _v(value, confidence=0.9, **extra):
+    return {"value": value, "confidence": confidence, "source_ids": ["m1"], **extra}
+
+
+CARD = {
+    "identity": {"name": _v("Ada Lovelace", 1.0), "email": _v("ada@example.com", 1.0)},
+    "professional": {"current_company": _v("Analytical Engines"), "current_role": _v("Engineer"),
+                     "company_history": [_v("Old Co")], "role_history": []},
+    "personal": {"location": _v("London"), "location_history": [], "education": [],
+                 "interests": [_v("poetry"), _v("chess", 0.4)]},
+    "knowledge": {"expertise": [_v("algorithms")], "top_domains": [], "skills": [_v("Python")]},
+    "goals": {"active": [_v("Publish the notes")], "completed": [_v("Old goal")]},
+    "preferences": [_v("concise answers"), _v("tea", 0.2, is_override=True)],
+    "candidates": [{"field_key": "location", **_v("Paris")}],
+}
+
+
+def test_render_profile_card_current_state_only(vity_module):
+    out = vity_module._render_profile_card(CARD)
+    assert out.splitlines()[:3] == [
+        "- Name: Ada Lovelace",
+        "- Work: Engineer at Analytical Engines",
+        "- Location: London",
+    ]
+    assert "- Skills: Python" in out and "- Active goals: Publish the notes" in out
+    assert "poetry" in out and "chess" not in out           # below the confidence floor
+    assert "tea" in out                                      # manual override always kept
+    for absent in ("ada@example.com", "Paris", "Old Co", "Old goal"):
+        assert absent not in out                              # email, candidates, history
+
+
+def test_render_profile_card_empty_and_malformed(vity_module):
+    render = vity_module._render_profile_card
+    assert render({}) == ""
+    assert render(None) == ""
+    assert render({"identity": "oops", "preferences": [None, {"value": ""}]}) == ""
+
+
+def test_render_profile_card_keeps_whole_lines_under_cap(vity_module, monkeypatch):
+    monkeypatch.setattr(vity_module, "_PROFILE_MAX_CHARS", 60)
+    out = vity_module._render_profile_card(CARD)
+    assert len(out) <= 60
+    assert all(line.startswith("- ") and ": " in line for line in out.splitlines())
+
+
+def test_render_profile_card_caps_items_per_field(vity_module):
+    many = {"knowledge": {"skills": [_v(f"skill{i}") for i in range(12)]}}
+    line = vity_module._render_profile_card(many)
+    assert line.count(";") == vity_module._PROFILE_INJECT_MAX_ITEMS - 1
+
+
+def test_load_profile_renders_card(vity_module, monkeypatch):
     fake_client = MagicMock()
-    fake_client.recall.return_value = "The user is a backend engineer who likes async workflows."
+    fake_client.get_profile_card.return_value = CARD
     provider = _provider_with_client(vity_module, monkeypatch, fake_client)
 
     provider._load_profile()
 
-    assert "backend engineer" in provider._profile_context
-    fake_client.recall.assert_called_once()
+    assert provider._profile_context.startswith("- Name: Ada Lovelace")
+    assert provider._profile_fields == len(provider._profile_context.splitlines())
+    fake_client.get_profile_card.assert_called_once()
+    fake_client.recall.assert_not_called()                  # no /recall-based profile anymore
+
+
+def test_load_profile_empty_card_injects_nothing(vity_module, monkeypatch):
+    fake_client = MagicMock()
+    fake_client.get_profile_card.return_value = {"identity": {"name": None}, "preferences": []}
+    provider = _provider_with_client(vity_module, monkeypatch, fake_client)
+
+    provider._load_profile()
+
+    assert provider._profile_context == ""
+    provider._load_profile()                                 # empty is not cached: retried
+    assert fake_client.get_profile_card.call_count == 2
+
+
+def test_load_profile_failure_is_non_fatal(vity_module, monkeypatch):
+    fake_client = MagicMock()
+    fake_client.get_profile_card.side_effect = RuntimeError("route down")
+    provider = _provider_with_client(vity_module, monkeypatch, fake_client)
+
+    provider._load_profile()                                 # must not raise
+
+    assert provider._profile_context == ""
 
 
 def test_load_profile_reuses_cache_within_ttl(vity_module, monkeypatch):
     fake_client = MagicMock()
-    fake_client.recall.return_value = "profile v1"
+    fake_client.get_profile_card.return_value = CARD
     provider = _provider_with_client(vity_module, monkeypatch, fake_client)
 
     provider._load_profile()
     provider._load_profile()   # second call within TTL must NOT re-fetch
 
-    fake_client.recall.assert_called_once()
+    fake_client.get_profile_card.assert_called_once()
 
 
 def test_load_profile_disabled_makes_no_call(vity_module, monkeypatch):
@@ -581,7 +656,46 @@ def test_load_profile_disabled_makes_no_call(vity_module, monkeypatch):
 
     provider._load_profile()
 
-    fake_client.recall.assert_not_called()
+    fake_client.get_profile_card.assert_not_called()
+
+
+def test_vity_profile_tool_returns_card_rows(vity_module, monkeypatch):
+    fake_client = MagicMock()
+    fake_client.get_profile_card.return_value = CARD
+    provider = _provider_with_client(vity_module, monkeypatch, fake_client)
+
+    out = json.loads(provider.handle_tool_call("vity_profile", {}))
+
+    assert out["result"]["Name"] == ["Ada Lovelace"]
+    assert out["result"]["Work"] == ["Engineer at Analytical Engines"]
+    assert "ada@example.com" not in json.dumps(out)
+    fake_client.get_profile.assert_not_called()             # deprecated SDK helper unused
+
+
+def test_vity_profile_tool_empty_card(vity_module, monkeypatch):
+    fake_client = MagicMock()
+    fake_client.get_profile_card.return_value = {}
+    provider = _provider_with_client(vity_module, monkeypatch, fake_client)
+
+    out = json.loads(provider.handle_tool_call("vity_profile", {}))
+
+    assert out["result"].startswith("No profile yet")
+
+
+def test_profile_fields_reported_in_telemetry(vity_module, monkeypatch):
+    fake_client = MagicMock()
+    fake_client.search.return_value = []
+    provider = _provider_with_client(vity_module, monkeypatch, fake_client)
+    provider._profile_context, provider._profile_fields = "- Name: Ada\n- Location: London", 2
+    events = []
+    monkeypatch.setattr(provider, "_track", lambda event, props=None: events.append((event, props)))
+
+    provider.prefetch("hello there")
+    provider.prefetch("and again")
+
+    recalls = [p for e, p in events if e == "recall_performed"]
+    assert recalls[0]["profile_injected"] is True and recalls[0]["profile_fields"] == 2
+    assert recalls[1]["profile_fields"] == 0                 # only reported when injected
 
 
 def test_prefetch_injects_profile_once_as_background_block(vity_module, monkeypatch):
@@ -619,24 +733,3 @@ def test_session_reset_rearms_profile_injection(vity_module):
     provider.on_session_switch("new", reset=True)
     assert provider._profile_injected is False       # will re-inject
     assert provider._profile_context == "cached profile"  # cache preserved
-
-
-def test_strip_memory_context_prefix(vity_module):
-    strip = vity_module._strip_memory_context_prefix
-    raw = "[Memory context - use if relevant to the conversation]\n\nKey facts:\n- I am an intern."
-    out = strip(raw)
-    assert out.startswith("Key facts:")
-    assert "[Memory context" not in out
-    # No banner -> unchanged.
-    assert strip("Key facts:\n- x") == "Key facts:\n- x"
-
-
-def test_load_profile_strips_backend_banner(vity_module, monkeypatch):
-    fake_client = MagicMock()
-    fake_client.recall.return_value = "[Memory context - use if relevant]\n\nKey facts:\n- I am an AI intern."
-    provider = _provider_with_client(vity_module, monkeypatch, fake_client)
-
-    provider._load_profile()
-
-    assert provider._profile_context.startswith("Key facts:")
-    assert "[Memory context" not in provider._profile_context

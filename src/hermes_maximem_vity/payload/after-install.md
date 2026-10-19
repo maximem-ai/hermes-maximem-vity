@@ -3,7 +3,7 @@
 `hermes-maximem-vity install` completed these steps:
 
 - Copied the plugin into `~/.hermes/plugins/maximem_vity/`
-- Installed `maximem-vity-sdk` (0.3.0 or newer) into the Hermes environment
+- Installed `maximem-vity-sdk` (0.3.1 or newer) into the Hermes environment
 - Activated the provider (`memory.provider: maximem_vity`)
 
 If the installer reported **All set**, start the agent:

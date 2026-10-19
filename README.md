@@ -4,7 +4,7 @@ Vity by Maximem AI provides persistent, cross-session semantic memory for [Herme
 
 Vity gives the agent a long-term memory graph covering facts, preferences, episodes, knowledge, and profile. It recalls relevant context before each turn and captures the conversation after each turn, so the agent remembers users and projects across sessions.
 
-Built on the [`maximem-vity-sdk`](https://pypi.org/project/maximem-vity-sdk/) Python client (0.3.0 or newer).
+Built on the [`maximem-vity-sdk`](https://pypi.org/project/maximem-vity-sdk/) Python client (0.3.1 or newer).
 
 ## Install
 
@@ -118,7 +118,7 @@ Tunables (optional, non-secret, stored in `$HERMES_HOME/vity.json`, created on i
 | `recall_timeout` | `6.0` | Maximum seconds for a single pre-turn recall request. |
 | `recall_deadline` | `3.0` | Maximum total seconds pre-turn recall may take before the turn proceeds without memory. |
 | `recall_min_score` | `0.3` | Minimum relevance for an auto-injected memory. |
-| `profile_warmup` | `true` | Load a short user profile at session start and inject it once. |
+| `profile_warmup` | `true` | Inject the user's Profile Card once at the start of each session. |
 
 For a self-hosted backend, set `MAXIMEM_ENDPOINT`, or `endpoint` in `vity.json`, to a non-default Maximem API URL.
 
@@ -130,7 +130,7 @@ The plugin sends anonymous usage events (install, session start, recall latency 
 
 - **Recall before each turn.** A semantic search runs against the current message. If it completes within `recall_deadline` (default 3 seconds), the matches are injected as context; otherwise the turn proceeds with no memory rather than waiting. Only matches above `recall_min_score` are injected, so weak matches are not presented as fact.
 - **Follow-up resolution.** A short follow-up such as "why?" or "tell me more" has no subject of its own to search on. The plugin detects these and prepends the last substantial message, so the search still finds the right memories. Self-contained messages are searched verbatim, so a clean topic change is never diluted.
-- **Profile at session start.** When `profile_warmup` is on, a short "who is this user" summary is loaded off-turn and injected once at the start of a session as background context. It is cached across sessions for an hour to avoid repeated calls.
+- **Profile at session start.** When `profile_warmup` is on, the user's Profile Card (name, role and company, location, expertise, skills, interests, active goals and preferences) is loaded off-turn and injected once at the start of a session as background context. Only confident, current values are included; the email address and speculative values never are. The card is built automatically from the user's memories, so a brand-new user gets no profile block until theirs exists. It is cached across sessions for an hour.
 - **Capture after each turn.** The user and assistant exchange is saved to long-term memory on a background thread.
 - **Memory mirroring.** When the Hermes built-in memory tool records a fact, it is also stored in Vity so it participates in semantic recall.
 
@@ -144,7 +144,7 @@ The plugin exposes these tools to the agent:
 | --- | --- | --- |
 | `vity_recall` | `query` (required), `top_k` (default 10, max 50) | Retrieve specific stored memories. |
 | `vity_knowledge` | `query` (required), `limit` (default 10, max 100) | Retrieve consolidated, topic-level knowledge. |
-| `vity_profile` | none | Retrieve the user's full stored memory profile. |
+| `vity_profile` | none | Retrieve the user's Profile Card: who the user is, at a glance. |
 | `vity_store` | `content` (required), `memory_type` (`fact`, `preference`, `emotion`, `episode`, `knowledge`, `profile`) | Save a new memory. |
 | `vity_forget` | `query`, `dry_run` (default `true`) | Delete matching memories, previewing first. |
 

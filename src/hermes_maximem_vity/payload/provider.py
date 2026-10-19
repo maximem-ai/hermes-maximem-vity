@@ -68,32 +68,81 @@ _DEFAULT_RECALL_DEADLINE = 3.0
 # explicit agent request) stays unfiltered. 0.3 matches the knowledge endpoint's
 # own cosine floor.
 _DEFAULT_RECALL_MIN_SCORE = 0.3
-# Session-start profile warm-load: off-turn, fetch a general
-# "who is this user" summary and inject it ONCE per session, the first turn it's
-# ready, as silent background context. recall() is the synthesized-profile path
-# and the right source for identity / interests / current work. Cached across
-# sessions within the TTL so back-to-back sessions don't re-pay the call.
+# Session-start profile: off-turn, fetch the user's Profile Card and inject it
+# ONCE per session, the first turn it's ready, as silent background context.
+# Cached across sessions within the TTL so back-to-back sessions reuse it.
 _DEFAULT_WARM_PROFILE = True
 _PROFILE_TTL_SECONDS = 3600.0
 _PROFILE_MAX_CHARS = 1200
-# A broad keyword query returns a fuller, more consistent profile than a
-# natural-language phrasing: recall() embeds it as a bag of terms, so wide
-# keyword coverage maps to wide profile coverage.
-_PROFILE_PROMPT = (
-    "user identity name role work projects skills "
-    "interests preferences hobbies goals"
-)
+# Card values below this confidence are left out: injected context reads to the
+# agent as fact. Manual overrides (the user's own edits) are always kept.
+_PROFILE_MIN_CONFIDENCE = 0.6
+# Per-field item cap: the session-start block stays compact; the vity_profile
+# tool (an explicit request) shows more.
+_PROFILE_INJECT_MAX_ITEMS = 5
+_PROFILE_TOOL_MAX_ITEMS = 20
 
 
-def _strip_memory_context_prefix(text: str) -> str:
-    """Drop the backend's leading ``[Memory context ...]`` banner.
+def _card_values(entry: Any, max_items: int) -> List[str]:
+    """Confident values of one Profile Card field (a single value or a list)."""
+    entries = entry if isinstance(entry, list) else [entry]
+    values: List[str] = []
+    for e in entries:
+        if not isinstance(e, dict):
+            continue
+        value = str(e.get("value") or "").strip()
+        confident = e.get("is_override") or (e.get("confidence") or 0) >= _PROFILE_MIN_CONFIDENCE
+        if value and confident and value not in values:
+            values.append(value)
+    return values[:max_items]
 
-    Our own "About the user" header already frames the block, so the banner is
-    redundant noise once injected."""
-    t = text.lstrip()
-    if t.startswith("[") and "]" in t:
-        t = t[t.index("]") + 1:].lstrip()
-    return t
+
+def _profile_rows(card: Any, max_items: int) -> List[tuple]:
+    """The Profile Card as ``(label, values)`` rows, current state only.
+
+    Never includes the email (not useful context, and personal data) or
+    ``candidates`` (speculative or ended values, never current state).
+    """
+    if not isinstance(card, dict):
+        return []
+    section = lambda name: card.get(name) if isinstance(card.get(name), dict) else {}
+    identity, pro = section("identity"), section("professional")
+    personal, knowledge, goals = section("personal"), section("knowledge"), section("goals")
+
+    role = _card_values(pro.get("current_role"), 1)
+    company = _card_values(pro.get("current_company"), 1)
+    work = [f"{role[0]} at {company[0]}"] if role and company else role or company
+
+    rows = [
+        ("Name", _card_values(identity.get("name"), 1)),
+        ("Work", work),
+        ("Location", _card_values(personal.get("location"), 1)),
+        ("Education", _card_values(personal.get("education"), max_items)),
+        ("Expertise", _card_values(knowledge.get("expertise"), max_items)),
+        ("Domains", _card_values(knowledge.get("top_domains"), max_items)),
+        ("Skills", _card_values(knowledge.get("skills"), max_items)),
+        ("Interests", _card_values(personal.get("interests"), max_items)),
+        ("Active goals", _card_values(goals.get("active"), max_items)),
+        ("Preferences", _card_values(card.get("preferences"), max_items)),
+    ]
+    return [(label, values) for label, values in rows if values]
+
+
+def _render_profile_card(card: Any) -> str:
+    """The Profile Card as compact third-person lines for injection, or "".
+
+    Whole lines only: a line that would push past ``_PROFILE_MAX_CHARS`` is
+    dropped rather than cut mid-item.
+    """
+    lines: List[str] = []
+    size = 0
+    for label, values in _profile_rows(card, _PROFILE_INJECT_MAX_ITEMS):
+        line = f"- {label}: {'; '.join(values)}"
+        if size + len(line) + 1 > _PROFILE_MAX_CHARS:
+            continue
+        lines.append(line)
+        size += len(line) + 1
+    return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
@@ -162,9 +211,9 @@ VITY_RECALL_SCHEMA = {
 VITY_PROFILE_SCHEMA = {
     "name": "vity_profile",
     "description": (
-        "Retrieve the user's full memory profile: all stored facts, preferences, "
-        "emotions, episodes, knowledge, and profile data. Use at conversation start "
-        "for a complete context snapshot."
+        "Retrieve the user's Profile Card: name, role and company, location, "
+        "education, expertise, skills, interests, active goals and preferences. "
+        "Use for a quick snapshot of who the user is."
     ),
     "parameters": {"type": "object", "properties": {}, "required": []},
 }
@@ -450,6 +499,7 @@ class VityMemoryProvider(MemoryProvider):
         self._profile_context = ""
         self._profile_loaded_at = 0.0
         self._profile_injected = False
+        self._profile_fields = 0  # Profile Card fields in _profile_context (telemetry)
         # Timing: measure Vity API time vs Hermes LLM time
         self._vity_prefetch_ms: float = 0.0  # how long prefetch() waited for Vity
         self._vity_tool_ms: float = 0.0      # accumulated time inside handle_tool_call() this turn
@@ -653,14 +703,13 @@ class VityMemoryProvider(MemoryProvider):
         self._load_profile()
 
     def _load_profile(self) -> None:
-        """Warm-load a general 'who is this user' summary, off-turn.
+        """Warm-load the user's Profile Card, off-turn.
 
-        Best-effort. Uses recall() (the synthesized-profile path, the right
-        source for identity/interests/current work) on the main client's longer
-        timeout, since this never runs on a critical path. Cached across sessions
-        within ``_PROFILE_TTL_SECONDS`` so back-to-back sessions reuse it rather
-        than re-paying the call. A failure or empty result leaves no profile;
-        the session simply proceeds without one.
+        Best-effort. The card is a fast read of the user's resolved profile (no
+        LLM). Cached across sessions within ``_PROFILE_TTL_SECONDS`` so
+        back-to-back sessions reuse it. A failure or an empty card (a brand-new
+        user whose profile is not built yet) leaves no profile; the session
+        proceeds without one and the next session tries again.
         """
         import time
         if not self._warm_profile:
@@ -670,20 +719,15 @@ class VityMemoryProvider(MemoryProvider):
         ) < _PROFILE_TTL_SECONDS:
             return  # fresh cache, reuse across sessions
         try:
-            context = self._get_client().recall(
-                current_prompt=_PROFILE_PROMPT,
-                max_tokens=self._max_recall_tokens,
-                strategy="hybrid",
-            )
+            card = self._get_client().get_profile_card()
         except Exception as e:
             logger.debug("Vity profile warm-load skipped (non-fatal): %s", e)
             return
-        context = _strip_memory_context_prefix((context or "").strip())
+        context = _render_profile_card(card)
         if not context:
             return
-        if len(context) > _PROFILE_MAX_CHARS:
-            context = context[:_PROFILE_MAX_CHARS].rstrip()
         self._profile_context = context
+        self._profile_fields = context.count("\n") + 1
         self._profile_loaded_at = time.monotonic()
 
     # -- Retrieval (shared by auto-recall AND the vity_recall tool) -----------
@@ -838,6 +882,7 @@ class VityMemoryProvider(MemoryProvider):
                 "retrieved": bool(result),
                 "cold_start": was_cold,
                 "profile_injected": inject_profile,
+                "profile_fields": self._profile_fields if inject_profile else 0,
             },
         )
 
@@ -1026,11 +1071,11 @@ class VityMemoryProvider(MemoryProvider):
         try:
             if tool_name == "vity_profile":
                 try:
-                    profile = client.get_profile()
-                    if not profile:
-                        return json.dumps({"result": "No memories stored yet."})
+                    rows = _profile_rows(client.get_profile_card(), _PROFILE_TOOL_MAX_ITEMS)
+                    if not rows:
+                        return json.dumps({"result": "No profile yet. It is built automatically from conversations."})
                     self._vity_retrieved = True
-                    return json.dumps({"result": profile, "source": "vity"})
+                    return json.dumps({"result": {label: values for label, values in rows}, "source": "vity"})
                 except Exception as e:
                     return tool_error(f"Failed to fetch profile: {e}")
 
