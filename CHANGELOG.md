@@ -8,6 +8,10 @@
 - Only confident, current values are included. The email address and speculative values are never injected, and the block is never cut mid-item.
 - Requires `maximem-vity-sdk` 0.3.1 or newer. `hermes-maximem-vity install` upgrades an older SDK automatically.
 
+### Fixed
+
+- A fact saved with Hermes' built-in memory just before Hermes exited (for example a one-shot `hermes chat -q`) was never mirrored into Vity: the write ran on an untracked background thread that exit killed. Shutdown now waits for in-flight writes (bounded), and an exit hook covers exits that skip the host's shutdown.
+
 ### Added
 
 - `profile_fields` on the `recall_performed` telemetry event: how many Profile Card fields were injected.

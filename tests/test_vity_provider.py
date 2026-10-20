@@ -733,3 +733,52 @@ def test_session_reset_rearms_profile_injection(vity_module):
     provider.on_session_switch("new", reset=True)
     assert provider._profile_injected is False       # will re-inject
     assert provider._profile_context == "cached profile"  # cache preserved
+
+
+# ---------------------------------------------------------------------------
+# Memory writes must survive process exit
+# ---------------------------------------------------------------------------
+
+def test_shutdown_waits_for_inflight_memory_write(vity_module, monkeypatch):
+    # Regression: the built-in-memory mirror ran on an untracked daemon thread, so a
+    # fact saved just before exit (e.g. a one-shot turn) was killed before store().
+    import threading
+    import time as _time
+    stored = threading.Event()
+    fake_client = MagicMock()
+    fake_client.store.side_effect = lambda **_: (_time.sleep(0.3), stored.set())
+    provider = _provider_with_client(vity_module, monkeypatch, fake_client)
+
+    provider.on_memory_write("add", "user", "favourite editor is Zed")
+    provider.shutdown()
+
+    assert stored.is_set(), "shutdown returned before the mirrored store() completed"
+    fake_client.store.assert_called_once_with(content="favourite editor is Zed", memory_type="preference")
+
+
+def test_shutdown_write_drain_is_bounded(vity_module, monkeypatch):
+    import threading
+    import time as _time
+    release = threading.Event()
+    fake_client = MagicMock()
+    fake_client.store.side_effect = lambda **_: release.wait(5)
+    provider = _provider_with_client(vity_module, monkeypatch, fake_client)
+    monkeypatch.setattr(vity_module, "_WRITE_DRAIN_TIMEOUT_S", 0.2)
+
+    provider.on_memory_write("add", "memory", "slow fact")
+    t0 = _time.monotonic()
+    provider.shutdown()
+    assert _time.monotonic() - t0 < 2.0          # a wedged backend never blocks exit
+    release.set()
+
+
+def test_exit_drain_registered_once(vity_module, monkeypatch):
+    registered = []
+    monkeypatch.setattr(vity_module.atexit, "register", lambda fn: registered.append(fn))
+    provider = vity_module.VityMemoryProvider()
+    monkeypatch.setattr(provider, "_warm_recall", lambda: None)
+
+    provider.initialize("s1")
+    provider.initialize("s2")                    # /new or a second session in one process
+
+    assert registered == [provider.shutdown]

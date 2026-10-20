@@ -25,8 +25,10 @@ Config (non-secret tunables, optional), in $HERMES_HOME/vity.json:
 
 from __future__ import annotations
 
+import atexit
 import json
 import logging
+import time
 import os
 import sys
 import threading
@@ -81,6 +83,10 @@ _PROFILE_MIN_CONFIDENCE = 0.6
 # tool (an explicit request) shows more.
 _PROFILE_INJECT_MAX_ITEMS = 5
 _PROFILE_TOOL_MAX_ITEMS = 20
+# Shutdown waits up to this long (total) for in-flight memory writes. A store()
+# does classification + embedding server-side and can take several seconds;
+# without the wait, a fact saved just before exit was silently lost.
+_WRITE_DRAIN_TIMEOUT_S = 15.0
 
 
 def _card_values(entry: Any, max_items: int) -> List[str]:
@@ -487,6 +493,9 @@ class VityMemoryProvider(MemoryProvider):
         # message; only capture/sync runs in the background.
         self._prefetch_thread = None
         self._sync_thread = None
+        # In-flight memory writes (built-in memory mirroring), drained at shutdown.
+        self._write_threads: List[threading.Thread] = []
+        self._atexit_registered = False
         # First-turn flag, exempts the very first prompt from the min-length skip.
         self._cold_start = True
         # Last SUBSTANTIAL user message, the anchor a short follow-up ("why?",
@@ -622,6 +631,12 @@ class VityMemoryProvider(MemoryProvider):
                 "agent_context": agent_context or "primary",
             },
         )
+
+        # A CLI exit can skip the host's provider shutdown; drain pending writes at
+        # interpreter exit too (same pattern as the bundled hindsight provider).
+        if not self._atexit_registered:
+            self._atexit_registered = True
+            atexit.register(self.shutdown)
 
         # Warm the recall path in the background so the first real turn doesn't
         # pay the cold-start tax (SDK import + client build + DNS + TLS), which
@@ -1044,7 +1059,9 @@ class VityMemoryProvider(MemoryProvider):
             except Exception as e:
                 logger.debug("Vity on_memory_write mirror failed: %s", e)
 
-        threading.Thread(target=_mirror, daemon=True, name="vity-memwrite").start()
+        thread = threading.Thread(target=_mirror, daemon=True, name="vity-memwrite")
+        self._write_threads = [t for t in self._write_threads if t.is_alive()] + [thread]
+        thread.start()
 
     # -- Tool Schemas + Dispatch ---------------------------------------------
 
@@ -1206,10 +1223,17 @@ class VityMemoryProvider(MemoryProvider):
     # -- Shutdown ------------------------------------------------------------
 
     def shutdown(self) -> None:
-        """Flush background threads before process exits."""
+        """Flush background threads before process exits. Idempotent."""
         for t in (self._prefetch_thread, self._sync_thread):
             if t and t.is_alive():
                 t.join(timeout=5.0)
+        # Memory writes carry user-stated facts: wait for them (bounded) so a
+        # fact saved just before exit is not lost.
+        deadline = time.monotonic() + _WRITE_DRAIN_TIMEOUT_S
+        for t in self._write_threads:
+            if t.is_alive():
+                t.join(timeout=max(0.0, deadline - time.monotonic()))
+        self._write_threads = [t for t in self._write_threads if t.is_alive()]
         with self._client_lock:
             for attr in ("_client", "_recall_client"):
                 client = getattr(self, attr)
