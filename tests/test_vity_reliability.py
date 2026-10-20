@@ -1,4 +1,4 @@
-"""Provider behaviour added from the competitor review: write queue, mirrored
+"""Write queue, mirrored
 replace/remove, outage handling, notices, compression, setup/status."""
 
 from __future__ import annotations

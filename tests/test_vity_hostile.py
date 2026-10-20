@@ -1,4 +1,4 @@
-"""Hostile-input and concurrency regressions found by adversarial testing."""
+"""Hostile input and concurrency: invalid writes, forged lines, shared pending file, old SDK."""
 
 from __future__ import annotations
 
