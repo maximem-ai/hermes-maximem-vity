@@ -584,8 +584,7 @@ class VityMemoryProvider(MemoryProvider):
 
         # Skip writes for non-primary agent contexts. A cron job or a subagent's
         # system-prompt-driven turns would otherwise be captured as if the user
-        # said them, corrupting the user's memory profile. Mirrors the in-tree
-        # honcho/supermemory providers.
+        # said them, corrupting the user's memory profile.
         agent_context = (kwargs.get("agent_context") or "").strip().lower()
         platform = (kwargs.get("platform") or "").strip().lower()
         self._write_enabled = (
@@ -615,7 +614,7 @@ class VityMemoryProvider(MemoryProvider):
         )
 
         # A CLI exit can skip the host's provider shutdown; drain pending writes at
-        # interpreter exit too (same pattern as the bundled hindsight provider).
+        # interpreter exit too.
         if not self._atexit_registered:
             self._atexit_registered = True
             atexit.register(self.shutdown)
