@@ -12,6 +12,7 @@ import json
 import os
 import re
 import time
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -29,6 +30,12 @@ PROFILE_INJECT_MAX_ITEMS = 5
 PROFILE_TOOL_MAX_ITEMS = 20
 
 
+def one_line(text: Any) -> str:
+    """Collapse all whitespace (incl. newlines) so stored text can't forge extra
+    lines like "- Name: ..." in the injected block."""
+    return " ".join(str(text or "").split())
+
+
 def card_values(entry: Any, max_items: int) -> List[str]:
     """Confident values of one Profile Card field (a single value or a list)."""
     entries = entry if isinstance(entry, list) else [entry]
@@ -36,7 +43,7 @@ def card_values(entry: Any, max_items: int) -> List[str]:
     for e in entries:
         if not isinstance(e, dict):
             continue
-        value = str(e.get("value") or "").strip()
+        value = one_line(e.get("value"))
         confident = e.get("is_override") or (e.get("confidence") or 0) >= PROFILE_MIN_CONFIDENCE
         if value and confident and value not in values:
             values.append(value)
@@ -186,7 +193,7 @@ def format_memory_line(memory: Dict[str, Any], now_s: Optional[float] = None) ->
     if isinstance(score, (int, float)) and 0 < score <= 1:
         labels.append(f"{round(score * 100)}%")
     prefix = f"[{' · '.join(labels)}] " if labels else ""
-    return f"- {prefix}{memory['content']}"
+    return f"- {prefix}{one_line(memory['content'])}"
 
 
 # ---------------------------------------------------------------------------
@@ -226,6 +233,7 @@ def is_same_fact(stored: str, old_text: str) -> bool:
 
 AUTH_ERROR = "auth"
 CREDITS_ERROR = "credits"
+INVALID_ERROR = "invalid"  # the request itself is wrong; retrying can never succeed
 
 _ERROR_MESSAGES = {
     "VityAuthError": (
@@ -247,6 +255,8 @@ def classify_error(exc: BaseException) -> Tuple[str, str]:
     """``(kind, user-facing message)`` for an SDK error. Matched by class name so
     this module needs no SDK import."""
     for cls in type(exc).__mro__:
+        if cls.__name__ == "VityInvalidInputError":
+            return INVALID_ERROR, str(exc)
         if cls.__name__ in _ERROR_MESSAGES:
             return _ERROR_MESSAGES[cls.__name__]
     return "other", str(exc)
@@ -262,29 +272,70 @@ def classify_error(exc: BaseException) -> Tuple[str, str]:
 
 PENDING_WRITES_FILE = "vity_pending_writes.jsonl"
 PENDING_WRITES_MAX = 200
+_LOCK_WAIT_S = 5.0
+_LOCK_STALE_S = 30.0  # a lock older than this was left by a crashed process
+
+
+@contextmanager
+def _file_lock(path: Path):
+    """Cross-process lock beside ``path`` (atomic O_EXCL create; works on Windows).
+
+    Several Hermes processes (CLI, gateway) share one pending file. Without the
+    lock, a write landing while another process takes the file can be lost.
+    A stale lock (crashed holder) is broken after ``_LOCK_STALE_S``; if the lock
+    still can't be had within ``_LOCK_WAIT_S`` we proceed without it rather
+    than block shutdown (best-effort buffer).
+    """
+    lock = path.with_name(path.name + ".lock")
+    deadline = time.monotonic() + _LOCK_WAIT_S
+    acquired = False
+    while not acquired:
+        try:
+            os.close(os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600))
+            acquired = True
+        except FileExistsError:
+            try:
+                if time.time() - lock.stat().st_mtime > _LOCK_STALE_S:
+                    lock.unlink()
+                    continue
+            except FileNotFoundError:
+                continue
+            if time.monotonic() > deadline:
+                break
+            time.sleep(0.01)
+    try:
+        yield
+    finally:
+        if acquired:
+            try:
+                lock.unlink()
+            except FileNotFoundError:
+                pass
 
 
 def save_pending_writes(path: Path, jobs: List[Dict[str, Any]]) -> None:
-    """Append ``jobs`` to the pending file, keeping only the newest entries."""
+    """Append ``jobs`` to the pending file (owner-only), keeping the newest
+    ``PENDING_WRITES_MAX`` entries."""
     if not jobs:
         return
-    existing = load_pending_writes(path)
-    kept = (existing + jobs)[-PENDING_WRITES_MAX:]
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".tmp")
-    with open(tmp, "w", encoding="utf-8") as f:
-        for job in kept:
-            f.write(json.dumps(job) + "\n")
-    os.chmod(tmp, 0o600)
-    os.replace(tmp, path)
+    with _file_lock(path):
+        kept = (load_pending_writes(path) + list(jobs))[-PENDING_WRITES_MAX:]
+        tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write("".join(json.dumps(job) + "\n" for job in kept))
+        os.replace(tmp, path)
 
 
 def load_pending_writes(path: Path) -> List[Dict[str, Any]]:
-    """Read the pending file, skipping any corrupt line."""
-    if not path.exists():
+    """Read a pending file, skipping any corrupt line."""
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except FileNotFoundError:
         return []
     jobs = []
-    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+    for line in text.splitlines():
         try:
             job = json.loads(line)
         except ValueError:
@@ -295,10 +346,15 @@ def load_pending_writes(path: Path) -> List[Dict[str, Any]]:
 
 
 def take_pending_writes(path: Path) -> List[Dict[str, Any]]:
-    """Read and remove the pending file (the caller re-queues the jobs)."""
-    jobs = load_pending_writes(path)
-    try:
-        path.unlink()
-    except FileNotFoundError:
-        pass
-    return jobs
+    """Read and remove the pending writes (the caller re-queues them).
+
+    Under the lock, so when several Hermes processes start together exactly
+    one of them gets each write and none is delivered twice.
+    """
+    with _file_lock(path):
+        jobs = load_pending_writes(path)
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            pass
+    return jobs[-PENDING_WRITES_MAX:]

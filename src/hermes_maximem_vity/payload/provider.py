@@ -329,8 +329,8 @@ def _load_config(hermes_home: str | None = None) -> dict:
             for key, value in file_cfg.items():
                 if value not in (None, ""):
                     config[key] = value
-        except Exception:
-            pass
+        except Exception as e:  # a broken file must not stop memory; say so instead of ignoring it
+            logger.warning("Ignoring %s (invalid JSON, using defaults): %s", config_path, e)
 
     # Normalise types for tunables that may arrive as strings from JSON/env.
     config["auto_recall"] = _as_bool(config.get("auto_recall"), True)
@@ -520,8 +520,8 @@ class VityMemoryProvider(MemoryProvider):
         if config_path.exists():
             try:
                 existing = json.loads(config_path.read_text())
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("Rewriting %s, which was not valid JSON: %s", config_path, e)
         existing.update(values)
         atomic_json_write(config_path, existing, mode=0o600)
 
@@ -657,11 +657,11 @@ class VityMemoryProvider(MemoryProvider):
             try:
                 self._client = self._build_client()
                 return self._client
-            except ImportError:
+            except ImportError as e:
                 raise RuntimeError(
-                    "maximem-vity-sdk not installed. "
-                    "Run: pip install maximem-vity-sdk"
-                )
+                    "maximem-vity-sdk is not installed in Hermes' environment. "
+                    "Run: hermes-maximem-vity install"
+                ) from e
 
     def _get_recall_client(self):
         """Thread-safe lazy client for AUTO-RECALL, with a short HTTP timeout.
@@ -677,11 +677,11 @@ class VityMemoryProvider(MemoryProvider):
             try:
                 self._recall_client = self._build_client(timeout=self._recall_timeout)
                 return self._recall_client
-            except ImportError:
+            except ImportError as e:
                 raise RuntimeError(
-                    "maximem-vity-sdk not installed. "
-                    "Run: pip install maximem-vity-sdk"
-                )
+                    "maximem-vity-sdk is not installed in Hermes' environment. "
+                    "Run: hermes-maximem-vity install"
+                ) from e
 
     def _warm_recall(self) -> None:
         """One-time background warm-up of the recall client and connection.
@@ -1073,13 +1073,19 @@ class VityMemoryProvider(MemoryProvider):
                 return
             except Exception as e:
                 last_error = e
+                if support.classify_error(e)[0] == support.INVALID_ERROR:
+                    break  # the request itself is wrong: a retry can't succeed
                 if attempt == 1:
                     time.sleep(1.0)
         kind, message = support.classify_error(last_error)
-        logger.warning("Vity %s failed after a retry: %s", job["kind"], message)
+        logger.warning("Vity %s failed: %s", job["kind"], message)
         if job["kind"] == "capture":
             self._track("capture_result", {"status": "failed", "reason": kind})
-        if job["kind"] in ("capture", "store") and kind != support.AUTH_ERROR:
+        # Saved for replay only if a later attempt could succeed. Not for invalid
+        # input (it would fail on every start), and not for a rejected key: if the
+        # key is changed to another account, replaying would leak this account's
+        # conversation into it.
+        if job["kind"] in ("capture", "store") and kind not in (support.AUTH_ERROR, support.INVALID_ERROR):
             self._persist_pending([job])
 
     def _deliver(self, job: Dict[str, Any]) -> None:
