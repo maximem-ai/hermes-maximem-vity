@@ -424,7 +424,7 @@ def test_session_resume_keeps_cold_start_off(vity_module):
 # --------------------------------------------------------------------------
 
 def test_recall_status_reports_last_prefetch(vity_module, monkeypatch, capsys):
-    monkeypatch.setattr(vity_module, "RecallStatus", lambda label, count: (label, count))
+    monkeypatch.setattr(vity_module, "RecallStatus", lambda label, count, glyph: (glyph, label, count))
     fake_client = MagicMock()
     fake_client.search.side_effect = [
         [{"content": "User likes tea", "score": 0.9}, {"content": "User lives in Pune", "score": 0.8}],
@@ -433,7 +433,7 @@ def test_recall_status_reports_last_prefetch(vity_module, monkeypatch, capsys):
     provider = _provider_with_client(vity_module, monkeypatch, fake_client)
 
     provider.prefetch("what do I drink and where do I live?")
-    assert provider.recall_status() == ("Maximem Vity", 2)
+    assert provider.recall_status() == ("", "Maximem Vity", 2)      # no emoji glyph
 
     provider.prefetch("unrelated question with no memories")
     assert provider.recall_status() is None              # nothing injected -> no indicator

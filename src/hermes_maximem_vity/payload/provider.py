@@ -97,7 +97,8 @@ _WRITE_DRAIN_TIMEOUT_S = 15.0
 # turn the full deadline. The next recall after the pause is the health check.
 _RECALL_FAILURES_TO_PAUSE = 3
 _RECALL_PAUSE_SECONDS = 60.0
-# Shown in the host's recall indicator ("🧠 Maximem Vity: recalled 3 memories").
+# Label for the host's recall indicator line. No glyph: Hermes defaults to an
+# emoji, which we leave out so the line is plain text.
 _PROVIDER_LABEL = "Maximem Vity"
 
 
@@ -955,7 +956,7 @@ class VityMemoryProvider(MemoryProvider):
         """What the last prefetch injected, for the host's recall indicator."""
         if RecallStatus is None or self._last_recall_count is None:
             return None
-        return RecallStatus(_PROVIDER_LABEL, self._last_recall_count)
+        return RecallStatus(_PROVIDER_LABEL, self._last_recall_count, glyph="")
 
     # -- Sync Turn (MUST be non-blocking!) -----------------------------------
 
