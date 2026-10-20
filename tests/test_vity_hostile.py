@@ -101,3 +101,18 @@ def test_stale_lock_from_a_crashed_process_is_broken(vity_module, tmp_path, monk
 
     assert time.monotonic() - t0 < 1.0                         # did not wait out the full timeout
     assert [j["content"] for j in s.take_pending_writes(path)] == ["after crash"]
+
+
+def test_old_sdk_degrades_with_an_actionable_message(vity_module, monkeypatch, caplog):
+    # A partial upgrade: plugin 1.4.0 running on SDK 0.3.0 (no get_profile_card).
+    client = MagicMock(spec=["search", "capture", "store", "recall", "meetings_enabled", "close"])
+    client.search.return_value = [{"content": "User likes tea", "score": 0.9}]
+    monkeypatch.setitem(sys.modules, "maximem_vity", SimpleNamespace(VityClient=lambda **_: client))
+    provider = vity_module.VityMemoryProvider()
+    provider._api_key = "mx_k"
+
+    provider._load_profile()                                   # must not raise
+    assert "0.3.1" in caplog.text and "hermes-maximem-vity install" in caplog.text
+    out = json.loads(provider.handle_tool_call("vity_profile", {}))
+    assert "hermes-maximem-vity install" in out["error"]       # actionable, not an AttributeError
+    assert "User likes tea" in provider.prefetch("what do I drink?")   # recall still works

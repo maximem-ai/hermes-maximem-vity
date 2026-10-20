@@ -97,6 +97,11 @@ _WRITE_DRAIN_TIMEOUT_S = 15.0
 # turn the full deadline. The next recall after the pause is the health check.
 _RECALL_FAILURES_TO_PAUSE = 3
 _RECALL_PAUSE_SECONDS = 60.0
+# Shown when Hermes' SDK predates the Profile Card (a partial upgrade). Recall and
+# capture keep working; only the profile needs the newer SDK.
+_SDK_TOO_OLD = ("The Profile Card needs maximem-vity-sdk 0.3.1 or newer in Hermes' "
+                "environment. Run: hermes-maximem-vity install")
+
 # Label for the host's recall indicator line. No glyph: Hermes defaults to an
 # emoji, which we leave out so the line is plain text.
 _PROVIDER_LABEL = "Maximem Vity"
@@ -721,8 +726,12 @@ class VityMemoryProvider(MemoryProvider):
             time.monotonic() - self._profile_loaded_at
         ) < _PROFILE_TTL_SECONDS:
             return  # fresh cache, reuse across sessions
+        client = self._get_client()
+        if not hasattr(client, "get_profile_card"):
+            logger.warning(_SDK_TOO_OLD)
+            return
         try:
-            card = self._get_client().get_profile_card()
+            card = client.get_profile_card()
         except Exception as e:
             self._note_service_issue(e)
             logger.debug("Vity profile warm-load skipped (non-fatal): %s", e)
@@ -1157,6 +1166,8 @@ class VityMemoryProvider(MemoryProvider):
 
         try:
             if tool_name == "vity_profile":
+                if not hasattr(client, "get_profile_card"):
+                    return tool_error(_SDK_TOO_OLD)
                 try:
                     rows = support.profile_rows(client.get_profile_card(), support.PROFILE_TOOL_MAX_ITEMS)
                     if not rows:
