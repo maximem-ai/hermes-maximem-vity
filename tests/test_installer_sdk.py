@@ -123,8 +123,10 @@ def test_install_returns_false_when_no_interpreter(monkeypatch):
 
 # -- SDK version probe (regression: an old 0.2.x SDK passed the import-only check) --
 
-@pytest.mark.parametrize("version,ok", [("0.2.3", False), ("0.3.0", True), ("0.10.1", True)])
-def test_sdk_probe_requires_0_3(monkeypatch, version, ok):
+@pytest.mark.parametrize("version,ok", [
+    ("0.2.3", False), ("0.3.0", False), ("0.3.1", True), ("0.3.2rc1", True), ("0.10.0", True), ("1.0.0", True),
+])
+def test_sdk_probe_requires_0_3_1(monkeypatch, version, ok):
     import importlib.metadata
     import types
     monkeypatch.setitem(sys.modules, "maximem_vity", types.ModuleType("maximem_vity"))
