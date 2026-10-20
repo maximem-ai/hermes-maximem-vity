@@ -128,13 +128,16 @@ The plugin sends anonymous usage events (install, session start, recall latency 
 
 ## How it works
 
-- **Recall before each turn.** A semantic search runs against the current message. If it completes within `recall_deadline` (default 3 seconds), the matches are injected as context; otherwise the turn proceeds with no memory rather than waiting. Only matches above `recall_min_score` are injected, so weak matches are not presented as fact.
+- **Recall before each turn.** A semantic search runs against the current message. If it completes within `recall_deadline` (default 3 seconds), the matches are injected as context; otherwise the turn proceeds with no memory rather than waiting. Only matches above `recall_min_score` are injected, so weak matches are not presented as fact. Each memory is labelled with its age and relevance, for example `[3d ago · 82%]`, so the agent can tell stale facts from fresh ones. Hermes shows a "recalled N memories" line on every platform when memory is used.
 - **Follow-up resolution.** A short follow-up such as "why?" or "tell me more" has no subject of its own to search on. The plugin detects these and prepends the last substantial message, so the search still finds the right memories. Self-contained messages are searched verbatim, so a clean topic change is never diluted.
 - **Profile at session start.** When `profile_warmup` is on, the user's Profile Card (name, role and company, location, expertise, skills, interests, active goals and preferences) is loaded off-turn and injected once at the start of a session as background context. Only confident, current values are included; the email address and speculative values never are. The card is built automatically from the user's memories, so a brand-new user gets no profile block until theirs exists. It is cached across sessions for an hour.
-- **Capture after each turn.** The user and assistant exchange is saved to long-term memory on a background thread.
-- **Memory mirroring.** When the Hermes built-in memory tool records a fact, it is also stored in Vity so it participates in semantic recall.
+- **Capture after each turn.** The user and assistant exchange is saved to long-term memory in the background. Hermes' own system notices (for example context-compaction summaries) are not saved as if the user said them.
+- **Memory mirroring.** When the Hermes built-in memory tool adds a fact, it is also stored in Vity. When it replaces or removes one, the old copy in Vity is removed too, but only if it matches exactly; anything less certain is left alone rather than risk deleting the wrong memory.
+- **Long sessions.** After Hermes compresses a long conversation, the Profile Card is injected again so it is not lost in the summary.
 
-Recall runs synchronously on the pre-turn path but is bounded by `recall_deadline`, so a slow or unhealthy backend degrades to no memory for that turn instead of hanging. Capture, mirroring, and profile warm-load run on background threads and never block the reply.
+Recall runs on the pre-turn path but is bounded by `recall_deadline`, so a slow or unhealthy backend degrades to no memory for that turn instead of hanging. After three failed recalls in a row, auto-recall pauses for a minute so an outage does not slow every turn. If the API key is rejected or the account runs out of credits, the agent is told once that memory is unavailable, instead of acting as if it knows nothing about you.
+
+All writes (captured turns and mirrored facts) go through one queue, in order, and never block the reply. A write that still fails after a retry, or is still queued when Hermes exits, is kept in `$HERMES_HOME/vity_pending_writes.jsonl` (owner-only permissions, at most 200 entries) and delivered on the next start.
 
 ## Agent tools
 
@@ -146,9 +149,10 @@ The plugin exposes these tools to the agent:
 | `vity_knowledge` | `query` (required), `limit` (default 10, max 100) | Retrieve consolidated, topic-level knowledge. |
 | `vity_profile` | none | Retrieve the user's Profile Card: who the user is, at a glance. |
 | `vity_store` | `content` (required), `memory_type` (`fact`, `preference`, `emotion`, `episode`, `knowledge`, `profile`) | Save a new memory. |
-| `vity_forget` | `query`, `dry_run` (default `true`) | Delete matching memories, previewing first. |
+| `vity_forget` | `query` (required), `dry_run` (default `true`) | Delete matching memories, previewing first. |
+| `vity_meeting_recall` | `question` (required), `meeting_type`, `status` | Answer questions about meetings, decisions and attendees. Requires Meeting Memory on the account; otherwise it says so. |
 
-`vity_recall` and `vity_knowledge` are complementary: use recall for a specific fact the user stated, and knowledge for what the user broadly knows about a topic. When Meeting Memory is enabled for the account, an additional `vity_meeting_recall` tool is offered for questions about meetings, decisions, and attendees.
+`vity_recall` and `vity_knowledge` are complementary: use recall for a specific fact the user stated, and knowledge for what the user broadly knows about a topic.
 
 In chat this is transparent. Ask the agent to "remember that ..." and it calls `vity_store`; ask "what do you know about ..." and it calls `vity_recall` or `vity_knowledge`. No special commands are required.
 
@@ -184,6 +188,7 @@ Tests stub the Hermes host modules (`agent.memory_provider`, `tools.registry`, `
 | `src/hermes_maximem_vity/payload/provider.py` | `VityMemoryProvider` and `register()`, copied to `~/.hermes/plugins/maximem_vity/__init__.py` on install. |
 | `src/hermes_maximem_vity/payload/cli.py` | The `hermes maximem_vity ...` subcommands. |
 | `src/hermes_maximem_vity/payload/analytics.py` | Usage telemetry (see [Usage telemetry](#usage-telemetry)). |
+| `src/hermes_maximem_vity/payload/vity_support.py` | Stateless helpers: Profile Card rendering, recall labels, fact matching, the pending-writes file. |
 | `src/hermes_maximem_vity/payload/plugin.yaml` | Plugin manifest (dependencies, required env). |
 | `src/hermes_maximem_vity/payload/vity.json.example` | Tunables template, seeded to `vity.json` on install. |
 | `tests/` | Unit tests and host-module stubs. |

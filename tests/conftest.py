@@ -17,6 +17,11 @@ from pathlib import Path
 import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
+# The provider imports its sibling helper module (vity_support) by flat name when
+# loaded standalone, as these tests do; installed, it is a package-relative import.
+_PAYLOAD_DIR = _REPO_ROOT / "src" / "hermes_maximem_vity" / "payload"
+if str(_PAYLOAD_DIR) not in sys.path:
+    sys.path.insert(0, str(_PAYLOAD_DIR))
 
 
 def _install_host_stubs(home: Path) -> None:

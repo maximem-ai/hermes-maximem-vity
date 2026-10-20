@@ -8,8 +8,23 @@
 - Only confident, current values are included. The email address and speculative values are never injected, and the block is never cut mid-item.
 - Requires `maximem-vity-sdk` 0.3.1 or newer. `hermes-maximem-vity install` upgrades an older SDK automatically.
 
+### Added
+
+- Hermes' recall indicator ("recalled N memories") on every platform, replacing the terminal-only timing line.
+- Recalled memories are labelled with their age and relevance, for example `[3d ago · 82%]`.
+- When the API key is rejected or credits run out, the agent is told once that memory is unavailable, and tool errors name the real cause.
+- Auto-recall pauses for a minute after three failed recalls in a row, so an outage does not slow every turn.
+- Writes that fail after a retry, or are still queued at exit, are kept in `$HERMES_HOME/vity_pending_writes.jsonl` and delivered on the next start.
+- Mirroring of the built-in memory tool's `replace` and `remove`: the old copy in Vity is removed when it matches exactly.
+- `hermes memory setup` offers the recall settings and tests the connection; `hermes memory status` shows a live connection check; a missing key or SDK is reported with the command that fixes it.
+
 ### Fixed
 
+- `vity_meeting_recall` could never be called inside Hermes: it was added after Hermes had already built its tool routing. It is now always registered and reports when Meeting Memory is not enabled.
+- The Profile Card was lost after Hermes compressed a long conversation; it is now injected again.
+- Capturing a turn could hold up Hermes' memory worker for up to 5 seconds; all writes now go through one non-blocking queue.
+- Hermes' own system notices (for example compaction summaries) were saved as if the user had said them.
+- `vity_forget` now requires a query.
 - A fact saved with Hermes' built-in memory just before Hermes exited (for example a one-shot `hermes chat -q`) was never mirrored into Vity: the write ran on an untracked background thread that exit killed. Shutdown now waits for in-flight writes (bounded), and an exit hook covers exits that skip the host's shutdown.
 
 ### Added

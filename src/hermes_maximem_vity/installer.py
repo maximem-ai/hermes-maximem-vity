@@ -31,6 +31,7 @@ _LEGACY_PLUGIN_NAME = "vity"
 _FILES = {
     "provider.py": "__init__.py",   # the MemoryProvider Hermes loads
     "analytics.py": "analytics.py", # best-effort usage telemetry helper
+    "vity_support.py": "vity_support.py",  # stateless helpers the provider imports
     "cli.py": "cli.py",             # the `hermes maximem_vity` subcommands
     "plugin.yaml": "plugin.yaml",   # manifest (deps, required env)
     "vity.json.example": "vity.json.example",
