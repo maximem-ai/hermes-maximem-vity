@@ -176,7 +176,7 @@ def test_rejected_key_is_told_to_the_model_once(vity_module, monkeypatch):
     first = provider.prefetch("what do I like?")
     second = provider.prefetch("and what else do I like?")
 
-    assert "Vity memory is unavailable" in first and "API key was rejected" in first
+    assert "Vity Memory is unavailable" in first and "API key was rejected" in first
     assert "unavailable" not in second
     assert client.search.call_count == 1                      # no more searches with a bad key
 

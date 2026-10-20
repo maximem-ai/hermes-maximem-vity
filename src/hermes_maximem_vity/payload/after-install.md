@@ -38,7 +38,7 @@ hermes maximem_vity search "anything"
 hermes config set memory.provider maximem_vity
 ```
 
-Avoid the interactive `hermes memory setup` wizard. Buffered or pasted terminal input can drop the selection and leave the provider unset.
+Prefer this to the provider selection in the interactive `hermes memory setup` wizard, where buffered or pasted terminal input can drop the selection and leave the provider unset.
 
 ## Usage telemetry
 

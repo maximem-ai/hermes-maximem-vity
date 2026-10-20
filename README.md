@@ -99,7 +99,7 @@ API key (secret, stored in `~/.hermes/.env`):
 
 The API key defines the memory space. Use a separate key for each account that needs isolated memories.
 
-To change the key, a plain re-install keeps the existing one. To replace it, pass the new key explicitly (it is written de-duplicated, so no stale copies remain):
+Re-running the installer keeps the existing key. To replace it, pass the new key explicitly; it overwrites the old entry:
 
 ```bash
 hermes-maximem-vity install --api-key mx_your_new_key
@@ -130,7 +130,7 @@ The plugin sends anonymous usage events (install, session start, recall latency 
 
 - **Recall before each turn.** A semantic search runs against the current message. If it completes within `recall_deadline` (default 3 seconds), the matches are injected as context; otherwise the turn proceeds with no memory rather than waiting. Only matches above `recall_min_score` are injected, so weak matches are not presented as fact. Each memory is labelled with its age and relevance, for example `[3d ago · 82%]`, so the agent can tell stale facts from fresh ones. Hermes shows a "recalled N memories" line on every platform when memory is used.
 - **Follow-up resolution.** A short follow-up such as "why?" or "tell me more" has no subject of its own to search on. The plugin detects these and prepends the last substantial message, so the search still finds the right memories. Self-contained messages are searched verbatim, so a clean topic change is never diluted.
-- **Profile at session start.** When `profile_warmup` is on, the user's Profile Card (name, role and company, location, expertise, skills, interests, active goals and preferences) is loaded off-turn and injected once at the start of a session as background context. Only confident, current values are included; the email address and speculative values never are. The card is built automatically from the user's memories, so a brand-new user gets no profile block until theirs exists. It is cached across sessions for an hour.
+- **Profile at session start.** When `profile_warmup` is on, the user's Profile Card (name, role and company, location, education, expertise, skills, interests, active goals and preferences) is loaded off-turn and injected once at the start of a session as background context. Only confident, current values are included; the email address and speculative values never are. The card is built automatically from the user's memories, so a brand-new user gets no profile block until theirs exists. It is cached across sessions for an hour.
 - **Capture after each turn.** The user and assistant exchange is saved to long-term memory in the background. Hermes' own system notices (for example context-compaction summaries) are not saved as if the user said them.
 - **Memory mirroring.** When the Hermes built-in memory tool adds a fact, it is also stored in Vity. When it replaces or removes one, the old copy in Vity is removed too, but only if it matches exactly; anything less certain is left alone rather than risk deleting the wrong memory.
 - **Long sessions.** After Hermes compresses a long conversation, the Profile Card is injected again so it is not lost in the summary.
@@ -169,7 +169,7 @@ hermes maximem_vity forget "old project"            # dry run (preview)
 hermes maximem_vity forget "old project" --yes      # confirm deletion
 ```
 
-To reactivate the provider, run `hermes config set memory.provider maximem_vity`. Avoid the interactive `hermes memory setup` wizard, since buffered or pasted terminal input can drop the selection and leave the provider unset.
+To reactivate the provider, run `hermes config set memory.provider maximem_vity`. Prefer this to the provider selection in the interactive `hermes memory setup` wizard, where buffered or pasted terminal input can drop the selection and leave the provider unset.
 
 ## Development
 

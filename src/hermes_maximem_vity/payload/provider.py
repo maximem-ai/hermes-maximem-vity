@@ -853,6 +853,8 @@ class VityMemoryProvider(MemoryProvider):
             "don't know. Never claim ignorance without trying. Pick the right tool:\n"
             "   - `vity_recall` for a SPECIFIC stored fact/preference/decision the user told you.\n"
             "   - `vity_knowledge` for what the user broadly KNOWS or their expertise on a topic.\n"
+            "   - `vity_profile` for who the user is (role, location, skills, goals, preferences).\n"
+            "   - `vity_meeting_recall` for questions about meetings, decisions and attendees.\n"
             "2. Use `vity_store` to save any new facts the user shares about themselves.\n"
             "3. Use `vity_forget` only when the user explicitly asks to delete a memory."
         )
@@ -956,7 +958,7 @@ class VityMemoryProvider(MemoryProvider):
         fix = ("hermes-maximem-vity install --api-key mx_..." if self._service_issue == support.AUTH_ERROR
                else "add credits at https://app.maximem.ai")
         return (
-            f"## Vity memory is unavailable\nLong-term memory is paused because {reason}. "
+            f"## Vity Memory is unavailable\nLong-term memory is paused because {reason}. "
             "If the user asks about past context, say memory is unavailable right now "
             f"rather than that you know nothing about them. They can fix it: {fix}"
         )
