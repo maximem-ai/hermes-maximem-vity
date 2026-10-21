@@ -507,6 +507,23 @@ def test_system_prompt_guides_recall_vs_knowledge(vity_module):
     assert "vity_knowledge" in block
 
 
+def test_system_prompt_with_auto_capture_stores_only_on_request(vity_module):
+    """Auto-capture already sends every turn; telling the model to also store each fact
+    costs a tool call per turn and saves the same fact twice."""
+    provider = vity_module.VityMemoryProvider()
+    provider._auto_capture = True
+    block = provider.system_prompt_block()
+    assert "save any new facts" not in block
+    assert "explicitly asks" in block and "vity_store" in block
+
+
+def test_system_prompt_without_auto_capture_still_stores_new_facts(vity_module):
+    """Adversarial: with capture off, vity_store is the only way facts reach memory."""
+    provider = vity_module.VityMemoryProvider()
+    provider._auto_capture = False
+    assert "save any new facts" in provider.system_prompt_block()
+
+
 # ---------------------------------------------------------------------------
 # Anaphoric follow-up query heuristic
 # ---------------------------------------------------------------------------

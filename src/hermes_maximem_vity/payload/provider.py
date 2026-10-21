@@ -854,8 +854,14 @@ class VityMemoryProvider(MemoryProvider):
             "   - `vity_knowledge` for what the user broadly KNOWS or their expertise on a topic.\n"
             "   - `vity_profile` for who the user is (role, location, skills, goals, preferences).\n"
             "   - `vity_meeting_recall` for questions about meetings, decisions and attendees.\n"
-            "2. Use `vity_store` to save any new facts the user shares about themselves.\n"
-            "3. Use `vity_forget` only when the user explicitly asks to delete a memory."
+            + (
+                # Every turn is captured and Vity extracts the facts; storing them too saves each twice.
+                "2. Conversation turns are saved automatically. Use `vity_store` only when the user "
+                "explicitly asks you to remember something.\n"
+                if self._auto_capture
+                else "2. Use `vity_store` to save any new facts the user shares about themselves.\n"
+            )
+            + "3. Use `vity_forget` only when the user explicitly asks to delete a memory."
         )
 
     # -- Prefetch (automatic context injection before each turn) -------------
