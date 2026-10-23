@@ -132,3 +132,19 @@ def test_forget_messages(cli, monkeypatch, capsys, count, confirm, expected):
     )
     cli._cmd_forget("q", confirm)
     assert expected in capsys.readouterr().out
+
+
+def test_api_errors_print_one_line_not_a_traceback(cli, monkeypatch, capsys):
+    class VityAuthError(Exception):
+        pass
+
+    def boom(*a, **k):
+        raise VityAuthError("Invalid or revoked API key (HTTP 401)")
+
+    monkeypatch.setattr(cli, "_cmd_forget", boom)
+    with pytest.raises(SystemExit) as exc:
+        cli.maximem_vity_command(SimpleNamespace(vity_subcommand="forget", query="x", yes=False))
+    err = capsys.readouterr().err
+    assert exc.value.code == 1
+    assert err.startswith("✗ Invalid or revoked API key") and "Traceback" not in err
+    assert "hermes-maximem-vity install --api-key" in err
