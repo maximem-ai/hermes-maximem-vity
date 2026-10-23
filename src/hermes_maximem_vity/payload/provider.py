@@ -97,9 +97,10 @@ _WRITE_DRAIN_TIMEOUT_S = 15.0
 # skip auto-recall for _RECALL_PAUSE_SECONDS so an outage stops costing every
 # turn the full deadline. The next recall after the pause is the health check.
 _RECALL_FAILURES_TO_PAUSE = 3
-# The live check runs before search on every turn: the router answers it in well under a second
-# (rules, or rules + a 1 s JEV cap), so it never gets the whole recall deadline.
-_LIVE_DEADLINE_S = 2.0
+# The live check runs before search on every turn. A miss is fast (no summary, no JEV); only a turn that
+# serves a chat pays for the summary fetch (router cap 1.5 s) and maybe JEV (1 s), slower in prod than
+# locally. Capped by the recall deadline too.
+_LIVE_DEADLINE_S = 3.0
 _RECALL_PAUSE_SECONDS = 60.0
 # Shown when Hermes' SDK predates the Profile Card (a partial upgrade). Recall and
 # capture keep working; only the profile needs the newer SDK.
