@@ -50,7 +50,7 @@ def test_config_schema_offers_key_and_typed_tunables(vity_module):
     assert schema[0]["key"] == "api_key" and schema[0]["secret"] is True
     assert schema[0]["env_var"] == "MAXIMEM_API_KEY"
     tunables = {item["key"]: item for item in schema[1:]}
-    assert set(tunables) == {"auto_recall", "auto_capture", "profile_warmup",
+    assert set(tunables) == {"auto_recall", "auto_capture", "profile_warmup", "live_context",
                              "recall_min_score", "recall_deadline", "max_recall_tokens"}
     assert all("type" in f and "default" in f and not f.get("secret") for f in tunables.values())
 
@@ -841,3 +841,84 @@ def test_exit_drain_registered_once(vity_module, monkeypatch):
     provider.initialize("s2")                    # /new or a second session in one process
 
     assert registered == [provider.shutdown]
+
+
+# --- live context: the user's live work in another app, checked on a session's first turn ----------
+
+HIT = '<vity-live-context app="chatgpt" tier="hit" trust="untrusted">\nEarlier work...\n</vity-live-context>'
+SOFT = '<vity-live-context app="chatgpt" tier="soft" trust="untrusted">\nPossibly related...\n</vity-live-context>'
+
+
+def test_first_turn_live_hit_injects_the_chat_and_skips_search(vity_module, monkeypatch):
+    fake_client = MagicMock()
+    fake_client.live_context.return_value = HIT
+    provider = _provider_with_client(vity_module, monkeypatch, fake_client)
+    out = provider.prefetch("celery worker still crashing with the same TimeoutError", session_id="s1")
+    fake_client.live_context.assert_called_once_with("celery worker still crashing with the same TimeoutError",
+                                                     session_key="s1")
+    fake_client.search.assert_not_called()  # the hot card replaces this turn's retrieval
+    assert HIT in out
+
+
+def test_first_turn_soft_hit_keeps_normal_search(vity_module, monkeypatch):
+    fake_client = MagicMock()
+    fake_client.live_context.return_value = SOFT
+    fake_client.search.return_value = [{"content": "User deploys on Fridays", "score": 0.9}]
+    provider = _provider_with_client(vity_module, monkeypatch, fake_client)
+    out = provider.prefetch("fix it", session_id="s1")
+    assert SOFT in out and "User deploys on Fridays" in out
+
+
+NAMED = '<vity-live-context app="chatgpt" tier="named" trust="untrusted">\nThe user referred to...\n</vity-live-context>'
+
+
+def test_a_later_turn_naming_an_app_gets_that_chat_and_keeps_search(vity_module, monkeypatch):
+    """Vity decides which turns get live context (the first, and any naming an app), so Hermes asks
+    every turn; a named chat rides on normal search for the agent to confirm."""
+    fake_client = MagicMock()
+    fake_client.live_context.side_effect = ["", NAMED]
+    fake_client.search.return_value = [{"content": "User deploys on Fridays", "score": 0.9}]
+    provider = _provider_with_client(vity_module, monkeypatch, fake_client)
+    provider.prefetch("first message of the session", session_id="s1")
+    out = provider.prefetch("continue my chatgpt chat", session_id="s1")
+    assert fake_client.live_context.call_count == 2
+    assert NAMED in out and "User deploys on Fridays" in out
+
+
+def test_older_sdk_without_live_context_behaves_as_before(vity_module, monkeypatch):
+    calls = []
+    fake_client = SimpleNamespace(search=lambda **kw: calls.append(kw) or [])
+    provider = _provider_with_client(vity_module, monkeypatch, fake_client)
+    assert provider.prefetch("anything on file for me?", session_id="s1") == ""
+    assert len(calls) == 1
+
+
+def test_live_context_switched_off_in_config(vity_module, monkeypatch):
+    fake_client = MagicMock()
+    fake_client.search.return_value = []
+    provider = _provider_with_client(vity_module, monkeypatch, fake_client)
+    provider._live_context = False
+    provider.prefetch("first message of the session", session_id="s1")
+    fake_client.live_context.assert_not_called()
+
+
+def test_live_context_failure_falls_back_to_search(vity_module, monkeypatch):
+    fake_client = MagicMock()
+    fake_client.live_context.side_effect = RuntimeError("boom")
+    fake_client.search.return_value = [{"content": "User likes tea", "score": 0.9}]
+    provider = _provider_with_client(vity_module, monkeypatch, fake_client)
+    assert "User likes tea" in provider.prefetch("what do I drink?", session_id="s1")
+
+
+def test_a_slow_live_check_costs_at_most_its_own_short_deadline(vity_module, monkeypatch):
+    """Review 2026-10-22: the live check waited the full recall deadline before search even began."""
+    import time as _time
+    fake_client = MagicMock()
+    fake_client.live_context.side_effect = lambda *a, **k: _time.sleep(5) or HIT
+    fake_client.search.return_value = []
+    provider = _provider_with_client(vity_module, monkeypatch, fake_client)
+    provider._recall_deadline = 6.0
+    start = _time.monotonic()
+    provider.prefetch("celery worker still crashing with the same TimeoutError", session_id="s1")
+    assert _time.monotonic() - start < vity_module._LIVE_DEADLINE_S + 1.0
+    fake_client.search.assert_called_once()  # the live check gave up; normal search still ran
