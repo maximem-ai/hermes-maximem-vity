@@ -247,3 +247,68 @@ def test_status_config_reports_live_connection(vity_module, monkeypatch):
 
     assert status["api_key"] == "set"
     assert status["connection"] == "✓ Connected to Maximem · Profile Card: 2 fields"
+
+
+# -- dates ------------------------------------------------------------------------------------
+
+def test_injected_memories_are_aged_by_when_they_were_said(vity_module, monkeypatch):
+    client = MagicMock()
+    said, stored = (time.time() - 400 * 86400) * 1000, (time.time() - 60) * 1000
+    client.search.return_value = [{"content": "User lives in Berlin", "score": 0.82, "created_at": stored,
+                                   "chat_at": said, "happened_at": said}]
+    provider = _provider(vity_module, monkeypatch, client)
+    assert "- [1y ago · 82%] User lives in Berlin" in provider.prefetch("where do I live?")
+
+
+def test_recall_tool_ages_by_when_it_was_said(vity_module, monkeypatch):
+    client = MagicMock()
+    said, stored = (time.time() - 3 * 86400) * 1000, (time.time() - 60) * 1000
+    client.search.return_value = [{"content": "User uses Zed", "score": 0.91, "created_at": stored,
+                                   "chat_at": said, "happened_at": said}]
+    provider = _provider(vity_module, monkeypatch, client)
+    out = json.loads(provider.handle_tool_call("vity_recall", {"query": "editor"}))
+    assert out["result"] == [{"memory": "User uses Zed", "age": "3d ago", "relevance": 0.91}]
+
+
+def _captured(vity_module, monkeypatch, **kwargs):
+    client = MagicMock()
+    provider = _provider(vity_module, monkeypatch, client)
+    before = int(time.time() * 1000)
+    provider.sync_turn("hi", "hello", session_id="s", **kwargs)
+    provider._write_queue.join()
+    return [m["timestamp"] for m in client.capture.call_args.kwargs["messages"]], before
+
+
+def test_sync_turn_uses_the_times_hermes_passes(vity_module, monkeypatch):
+    messages = [
+        {"role": "user", "content": "earlier", "timestamp": 1_600_000_000},
+        {"role": "assistant", "content": "earlier reply", "timestamp": 1_600_000_001},
+        {"role": "user", "content": "hi", "timestamp": 1_700_000_000},           # seconds
+        {"role": "assistant", "content": "hello", "timestamp": "2023-11-14T22:13:21Z"},
+    ]
+    stamps, _ = _captured(vity_module, monkeypatch, messages=messages)
+    assert stamps == [1_700_000_000_000, 1_700_000_001_000]
+
+
+@pytest.mark.parametrize("messages", [
+    None,
+    [],
+    [{"role": "user", "content": "hi"}, {"role": "assistant", "content": "hello"}],
+    [{"role": "user", "content": "hi", "timestamp": "garbage"},
+     {"role": "assistant", "content": "hello", "timestamp": None}],
+    [{"role": "user", "content": "old", "timestamp": 1_600_000_000}, {"role": "user", "content": "hi"},
+     {"role": "assistant", "content": "hello"}],                               # only the latest turn counts
+    "not a list",
+    [None, 5, "x"],
+])
+def test_sync_turn_without_usable_times_stamps_now(vity_module, monkeypatch, messages):
+    stamps, before = _captured(vity_module, monkeypatch, messages=messages)
+    assert all(before <= s <= int(time.time() * 1000) + 1 for s in stamps)
+    assert stamps[0] < stamps[1]
+
+
+def test_sync_turn_fills_only_the_missing_time(vity_module, monkeypatch):
+    messages = [{"role": "user", "content": "hi", "timestamp": 1_700_000_000_000},
+                {"role": "assistant", "content": "hello"}]
+    stamps, before = _captured(vity_module, monkeypatch, messages=messages)
+    assert stamps[0] == 1_700_000_000_000 and stamps[1] >= before

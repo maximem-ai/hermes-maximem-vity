@@ -91,3 +91,41 @@ def test_render_profile_card_never_cuts_mid_item():
     out = support.render_profile_card(card, max_chars=30)
     assert out == "- Expertise: short"
     assert json.dumps(out)  # plain text, serialisable
+
+
+# -- dates: when a memory happened, and message times as epoch ms ------------------------------
+
+def test_happened_ms_prefers_when_it_was_said():
+    assert support.happened_ms({"created_at": 7, "chat_at": 3, "happened_at": 3}) == 3
+    assert support.happened_ms({"created_at": 7, "chat_at": 3}) == 3            # no happened_at
+    assert support.happened_ms({"created_at": 7, "chat_at": None, "happened_at": 7}) == 7
+    assert support.happened_ms({"created_at": 7}) == 7                           # SDK without the new fields
+    assert support.happened_ms({}) is None
+
+
+def test_format_memory_line_ages_by_when_it_happened():
+    memory = {"content": "User lives in Berlin", "score": None,
+              "created_at": (NOW - 60) * 1000, "chat_at": (NOW - 400 * 86400) * 1000}
+    assert support.format_memory_line(memory, now_s=NOW) == "- [1y ago] User lives in Berlin"
+
+
+_MS = 1_700_000_000_000  # 2023-11-14T22:13:20Z
+
+
+@pytest.mark.parametrize("given", [1_700_000_000, 1_700_000_000.0, _MS, "2023-11-14T22:13:20Z",
+                                   "2023-11-14T22:13:20+00:00", "2023-11-15T03:43:20+05:30"])
+def test_epoch_ms_normalises(given):
+    assert support.epoch_ms(given) == _MS
+
+
+def test_epoch_ms_reads_a_zoneless_string_as_local_time():
+    # Hermes stamps messages with datetime.now().isoformat(): local time, no zone.
+    from datetime import datetime
+    local = datetime.fromtimestamp(_MS / 1000).isoformat()
+    assert support.epoch_ms(local) == _MS
+
+
+@pytest.mark.parametrize("bad", [None, "", "garbage", "2023-13-45", True, 0, -5, float("nan"),
+                                 float("inf"), [1], {"t": 1}])
+def test_epoch_ms_unusable_is_none(bad):
+    assert support.epoch_ms(bad) is None

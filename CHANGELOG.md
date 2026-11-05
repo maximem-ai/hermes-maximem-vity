@@ -21,6 +21,8 @@
 
 ### Fixed
 
+- Memory ages (`[3d ago]`, and `age` in `vity_recall`) count from when the memory was said, not when Vity stored it, so an old chat imported today no longer looks new. This uses the SDK's `happened_at` / `chat_at` and falls back to `created_at` on an SDK without them.
+- Captured turns keep the times Hermes passes on its messages (seconds, ms or ISO), converted to epoch ms. Turns without them are stamped when queued, as before.
 - `vity_meeting_recall` could never be called inside Hermes: it was added after Hermes had already built its tool routing. It is now always registered and reports when Meeting Memory is not enabled.
 - The Profile Card was lost after Hermes compressed a long conversation; it is now injected again.
 - Capturing a turn could hold up Hermes' memory worker for up to 5 seconds; all writes now go through one non-blocking queue.
