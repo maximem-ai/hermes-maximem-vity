@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.4.1
+
+### Changed
+
+- Documentation only. The README is rewritten in plain language and checked against the code:
+  the real location of `vity.json`, live context, what telemetry sends, and the pending-writes
+  file are documented. No code changes.
+
 ## 1.4.0
 
 ### Changed
