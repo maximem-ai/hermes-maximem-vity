@@ -214,18 +214,29 @@ def _cmd_forget(query: str, confirm: bool) -> None:
 
 
 def maximem_vity_command(args) -> None:
-    """Route ``hermes maximem_vity <subcommand>``."""
+    """Route ``hermes maximem_vity <subcommand>``.
+
+    API errors (rejected key, outage, invalid input) print one readable line
+    and exit 1, never a Python traceback.
+    """
     sub = getattr(args, "vity_subcommand", None)
-    if sub == "status" or sub is None:
-        _cmd_status()
-    elif sub == "search":
-        _cmd_search(args.query, args.limit, args.json)
-    elif sub == "store":
-        _cmd_store(args.content, args.type)
-    elif sub == "forget":
-        _cmd_forget(args.query, args.yes)
-    else:
-        print(f"Unknown vity subcommand: {sub}")
+    try:
+        if sub == "status" or sub is None:
+            _cmd_status()
+        elif sub == "search":
+            _cmd_search(args.query, args.limit, args.json)
+        elif sub == "store":
+            _cmd_store(args.content, args.type)
+        elif sub == "forget":
+            _cmd_forget(args.query, args.yes)
+        else:
+            print(f"Unknown vity subcommand: {sub}")
+    except Exception as e:
+        hint = ""
+        if any(c.__name__ == "VityAuthError" for c in type(e).__mro__):
+            hint = "\n  Fix the key: hermes-maximem-vity install --api-key mx_..."
+        print(f"✗ {e}{hint}", file=sys.stderr)
+        sys.exit(1)
 
 
 def register_cli(subparser) -> None:

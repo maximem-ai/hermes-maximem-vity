@@ -18,7 +18,20 @@ def test_is_available_requires_api_key(vity_module, monkeypatch):
     assert vity_module.VityMemoryProvider().is_available() is False
 
     monkeypatch.setenv("MAXIMEM_API_KEY", "mx_test_key")
+    monkeypatch.setitem(sys.modules, "maximem_vity", SimpleNamespace())  # SDK importable
     assert vity_module.VityMemoryProvider().is_available() is True
+
+
+def test_unavailable_reason_names_the_fix(vity_module, monkeypatch):
+    monkeypatch.delenv("MAXIMEM_API_KEY", raising=False)
+    monkeypatch.delenv("VITY_API_KEY", raising=False)
+    assert "MAXIMEM_API_KEY" in vity_module.VityMemoryProvider().unavailable_reason()
+
+    monkeypatch.setenv("MAXIMEM_API_KEY", "mx_test_key")
+    monkeypatch.delitem(sys.modules, "maximem_vity", raising=False)
+    import importlib.util
+    monkeypatch.setattr(importlib.util, "find_spec", lambda name: None)
+    assert "maximem-vity-sdk is not installed" in vity_module.VityMemoryProvider().unavailable_reason()
 
 
 def test_config_loads_key_and_tunable_defaults(vity_module, monkeypatch):
@@ -32,27 +45,54 @@ def test_config_loads_key_and_tunable_defaults(vity_module, monkeypatch):
     assert cfg["min_prompt_length"] == 5
 
 
-def test_config_schema_is_api_key_only(vity_module):
+def test_config_schema_offers_key_and_typed_tunables(vity_module):
     schema = vity_module.VityMemoryProvider().get_config_schema()
-    assert [item["key"] for item in schema] == ["api_key"]
-    assert schema[0]["secret"] is True
+    assert schema[0]["key"] == "api_key" and schema[0]["secret"] is True
     assert schema[0]["env_var"] == "MAXIMEM_API_KEY"
+    tunables = {item["key"]: item for item in schema[1:]}
+    assert set(tunables) == {"auto_recall", "auto_capture", "profile_warmup",
+                             "recall_min_score", "recall_deadline", "max_recall_tokens"}
+    assert all("type" in f and "default" in f and not f.get("secret") for f in tunables.values())
 
 
-def test_tool_schemas_expose_always_on_tools(vity_module):
-    # Base tools + the LIVE knowledge tool. Meeting/update/delete are gated and
-    # must NOT appear until their router route is confirmed live.
-    names = {t["name"] for t in vity_module.VityMemoryProvider().get_tool_schemas()}
-    assert names == {"vity_recall", "vity_profile", "vity_store", "vity_forget", "vity_knowledge"}
-
-
-def test_meeting_tool_hidden_until_enabled(vity_module):
+def test_post_setup_saves_only_tunables_and_reports_connection(vity_module, monkeypatch, tmp_path, capsys):
     provider = vity_module.VityMemoryProvider()
-    # Default: meetings not enabled -> tool hidden.
-    assert "vity_meeting_recall" not in {t["name"] for t in provider.get_tool_schemas()}
-    # Once the probe confirms support, the tool is advertised.
+    monkeypatch.setattr(provider, "_connection_summary", lambda home=None: "✓ Connected to Maximem")
+    provider.post_setup(str(tmp_path), {"recall_min_score": 0.5, "api_key": "mx_secret", "junk": 1})
+    saved = json.loads((tmp_path / "vity.json").read_text())
+    assert saved == {"recall_min_score": 0.5}               # the secret never lands in vity.json
+    assert "✓ Connected to Maximem" in capsys.readouterr().out
+
+
+def test_tool_schemas_are_static(vity_module):
+    # Hermes routes tools from get_tool_schemas() ONCE, before initialize(). The
+    # meeting tool must therefore always be listed (update/delete stay gated on
+    # the router route, which is a build-time constant).
+    provider = vity_module.VityMemoryProvider()
+    names = {t["name"] for t in provider.get_tool_schemas()}
+    assert names == {"vity_recall", "vity_profile", "vity_store", "vity_forget",
+                     "vity_knowledge", "vity_meeting_recall"}
     provider._meetings_enabled = True
-    assert "vity_meeting_recall" in {t["name"] for t in provider.get_tool_schemas()}
+    assert {t["name"] for t in provider.get_tool_schemas()} == names
+
+
+def test_meeting_tool_reports_not_enabled_without_calling_ask(vity_module, monkeypatch):
+    fake_client = MagicMock()
+    fake_client.meetings_enabled.return_value = False
+    provider = _provider_with_client(vity_module, monkeypatch, fake_client)
+
+    out = json.loads(provider.handle_tool_call("vity_meeting_recall", {"question": "what did we decide?"}))
+
+    assert "not enabled" in out["result"] and "Do not retry" in out["result"]
+    fake_client.meeting_ask.assert_not_called()
+
+
+def test_forget_requires_a_query(vity_module, monkeypatch):
+    fake_client = MagicMock()
+    provider = _provider_with_client(vity_module, monkeypatch, fake_client)
+    out = json.loads(provider.handle_tool_call("vity_forget", {"query": "  ", "dry_run": False}))
+    assert "Missing required parameter: query" in out["error"]
+    fake_client.forget.assert_not_called()
 
 
 def test_crud_tools_gated_off_by_default(vity_module):
@@ -98,7 +138,7 @@ def test_client_built_with_hermes_channel(vity_module, monkeypatch):
     provider._api_key = "mx_test_key"
     provider._get_client()
 
-    # SDK 0.3.0 defaults channel/agent_id to "unspecified"; Hermes must self-identify,
+    # SDK 0.3.x defaults channel/agent_id to "unspecified"; Hermes must self-identify,
     # since the server builds the conversation id as "{channel}:{sessionKey}".
     constructor.assert_called_once_with(api_key="mx_test_key", channel="hermes", agent_id="hermes")
 
@@ -263,8 +303,8 @@ def test_prefetch_caps_injected_context_to_max_recall_tokens(vity_module, monkey
 
     out = provider.prefetch("tell me everything")
 
-    assert provider._vity_retrieved
     assert out.count("x") <= 40
+    assert out.count("x") > 0          # an oversized memory is truncated, not dropped
 
 
 # --------------------------------------------------------------------------
@@ -310,8 +350,7 @@ def test_primary_context_keeps_writes_enabled(vity_module, monkeypatch):
     assert provider._write_enabled is True
 
     provider.sync_turn("hi", "hello", session_id="s1")
-    if provider._sync_thread:
-        provider._sync_thread.join(timeout=2)
+    provider._write_queue.join()
     fake_client.capture.assert_called_once()
 
 
@@ -381,20 +420,24 @@ def test_session_resume_keeps_cold_start_off(vity_module):
 
 
 # --------------------------------------------------------------------------
-# #6: timing line is suppressed on non-TTY sinks (no ANSI garble)
+# #6: the recall indicator goes through the host (recall_status), never stdout
 # --------------------------------------------------------------------------
 
-def test_timing_line_suppressed_when_not_a_tty(vity_module, monkeypatch, capsys):
+def test_recall_status_reports_last_prefetch(vity_module, monkeypatch, capsys):
+    monkeypatch.setattr(vity_module, "RecallStatus", lambda label, count, glyph: (glyph, label, count))
     fake_client = MagicMock()
+    fake_client.search.side_effect = [
+        [{"content": "User likes tea", "score": 0.9}, {"content": "User lives in Pune", "score": 0.8}],
+        [],
+    ]
     provider = _provider_with_client(vity_module, monkeypatch, fake_client)
-    provider._vity_retrieved = True
-    provider._prefetch_done_at = 1.0  # pretend a retrieval happened this turn
-    provider._write_enabled = False   # skip the capture thread; we only test output
-    monkeypatch.setattr(sys.stdout, "isatty", lambda: False)
 
-    provider.sync_turn("hi", "hello", session_id="s1")
+    provider.prefetch("what do I drink and where do I live?")
+    assert provider.recall_status() == ("", "Maximem Vity", 2)      # no emoji glyph
 
-    assert "Vity memory" not in capsys.readouterr().out
+    provider.prefetch("unrelated question with no memories")
+    assert provider.recall_status() is None              # nothing injected -> no indicator
+    assert capsys.readouterr().out == ""                  # no direct terminal output
 
 
 # --------------------------------------------------------------------------
@@ -469,7 +512,7 @@ def test_system_prompt_guides_recall_vs_knowledge(vity_module):
 # ---------------------------------------------------------------------------
 
 def test_needs_prior_context_classifier(vity_module):
-    needs = vity_module._needs_prior_context
+    needs = vity_module.support.needs_prior_context
     # Follow-ups that can't be searched alone:
     assert needs("why?")
     assert needs("tell me more")
@@ -552,26 +595,100 @@ def test_session_reset_clears_anchor(vity_module):
 # Session-start user-profile warm-load + one-time injection
 # ---------------------------------------------------------------------------
 
-def test_load_profile_caches_recall_summary(vity_module, monkeypatch):
+def _v(value, confidence=0.9, **extra):
+    return {"value": value, "confidence": confidence, "source_ids": ["m1"], **extra}
+
+
+CARD = {
+    "identity": {"name": _v("Ada Lovelace", 1.0), "email": _v("ada@example.com", 1.0)},
+    "professional": {"current_company": _v("Analytical Engines"), "current_role": _v("Engineer"),
+                     "company_history": [_v("Old Co")], "role_history": []},
+    "personal": {"location": _v("London"), "location_history": [], "education": [],
+                 "interests": [_v("poetry"), _v("chess", 0.4)]},
+    "knowledge": {"expertise": [_v("algorithms")], "top_domains": [], "skills": [_v("Python")]},
+    "goals": {"active": [_v("Publish the notes")], "completed": [_v("Old goal")]},
+    "preferences": [_v("concise answers"), _v("tea", 0.2, is_override=True)],
+    "candidates": [{"field_key": "location", **_v("Paris")}],
+}
+
+
+def test_render_profile_card_current_state_only(vity_module):
+    out = vity_module.support.render_profile_card(CARD)
+    assert out.splitlines()[:3] == [
+        "- Name: Ada Lovelace",
+        "- Work: Engineer at Analytical Engines",
+        "- Location: London",
+    ]
+    assert "- Skills: Python" in out and "- Active goals: Publish the notes" in out
+    assert "poetry" in out and "chess" not in out           # below the confidence floor
+    assert "tea" in out                                      # manual override always kept
+    for absent in ("ada@example.com", "Paris", "Old Co", "Old goal"):
+        assert absent not in out                              # email, candidates, history
+
+
+def test_render_profile_card_empty_and_malformed(vity_module):
+    render = vity_module.support.render_profile_card
+    assert render({}) == ""
+    assert render(None) == ""
+    assert render({"identity": "oops", "preferences": [None, {"value": ""}]}) == ""
+
+
+def test_render_profile_card_keeps_whole_lines_under_cap(vity_module, monkeypatch):
+    out = vity_module.support.render_profile_card(CARD, max_chars=60)
+    assert len(out) <= 60
+    assert all(line.startswith("- ") and ": " in line for line in out.splitlines())
+
+
+def test_render_profile_card_caps_items_per_field(vity_module):
+    many = {"knowledge": {"skills": [_v(f"skill{i}") for i in range(12)]}}
+    line = vity_module.support.render_profile_card(many)
+    assert line.count(";") == vity_module.support.PROFILE_INJECT_MAX_ITEMS - 1
+
+
+def test_load_profile_renders_card(vity_module, monkeypatch):
     fake_client = MagicMock()
-    fake_client.recall.return_value = "The user is a backend engineer who likes async workflows."
+    fake_client.get_profile_card.return_value = CARD
     provider = _provider_with_client(vity_module, monkeypatch, fake_client)
 
     provider._load_profile()
 
-    assert "backend engineer" in provider._profile_context
-    fake_client.recall.assert_called_once()
+    assert provider._profile_context.startswith("- Name: Ada Lovelace")
+    assert provider._profile_fields == len(provider._profile_context.splitlines())
+    fake_client.get_profile_card.assert_called_once()
+    fake_client.recall.assert_not_called()                  # no /recall-based profile anymore
+
+
+def test_load_profile_empty_card_injects_nothing(vity_module, monkeypatch):
+    fake_client = MagicMock()
+    fake_client.get_profile_card.return_value = {"identity": {"name": None}, "preferences": []}
+    provider = _provider_with_client(vity_module, monkeypatch, fake_client)
+
+    provider._load_profile()
+
+    assert provider._profile_context == ""
+    provider._load_profile()                                 # empty is not cached: retried
+    assert fake_client.get_profile_card.call_count == 2
+
+
+def test_load_profile_failure_is_non_fatal(vity_module, monkeypatch):
+    fake_client = MagicMock()
+    fake_client.get_profile_card.side_effect = RuntimeError("route down")
+    provider = _provider_with_client(vity_module, monkeypatch, fake_client)
+
+    provider._load_profile()                                 # must not raise
+
+    assert provider._profile_context == ""
 
 
 def test_load_profile_reuses_cache_within_ttl(vity_module, monkeypatch):
     fake_client = MagicMock()
-    fake_client.recall.return_value = "profile v1"
+    fake_client.get_profile_card.return_value = CARD
     provider = _provider_with_client(vity_module, monkeypatch, fake_client)
 
     provider._load_profile()
     provider._load_profile()   # second call within TTL must NOT re-fetch
 
-    fake_client.recall.assert_called_once()
+    fake_client.get_profile_card.assert_called_once()
 
 
 def test_load_profile_disabled_makes_no_call(vity_module, monkeypatch):
@@ -581,7 +698,46 @@ def test_load_profile_disabled_makes_no_call(vity_module, monkeypatch):
 
     provider._load_profile()
 
-    fake_client.recall.assert_not_called()
+    fake_client.get_profile_card.assert_not_called()
+
+
+def test_vity_profile_tool_returns_card_rows(vity_module, monkeypatch):
+    fake_client = MagicMock()
+    fake_client.get_profile_card.return_value = CARD
+    provider = _provider_with_client(vity_module, monkeypatch, fake_client)
+
+    out = json.loads(provider.handle_tool_call("vity_profile", {}))
+
+    assert out["result"]["Name"] == ["Ada Lovelace"]
+    assert out["result"]["Work"] == ["Engineer at Analytical Engines"]
+    assert "ada@example.com" not in json.dumps(out)
+    fake_client.get_profile.assert_not_called()             # deprecated SDK helper unused
+
+
+def test_vity_profile_tool_empty_card(vity_module, monkeypatch):
+    fake_client = MagicMock()
+    fake_client.get_profile_card.return_value = {}
+    provider = _provider_with_client(vity_module, monkeypatch, fake_client)
+
+    out = json.loads(provider.handle_tool_call("vity_profile", {}))
+
+    assert out["result"].startswith("No profile yet")
+
+
+def test_profile_fields_reported_in_telemetry(vity_module, monkeypatch):
+    fake_client = MagicMock()
+    fake_client.search.return_value = []
+    provider = _provider_with_client(vity_module, monkeypatch, fake_client)
+    provider._profile_context, provider._profile_fields = "- Name: Ada\n- Location: London", 2
+    events = []
+    monkeypatch.setattr(provider, "_track", lambda event, props=None: events.append((event, props)))
+
+    provider.prefetch("hello there")
+    provider.prefetch("and again")
+
+    recalls = [p for e, p in events if e == "recall_performed"]
+    assert recalls[0]["profile_injected"] is True and recalls[0]["profile_fields"] == 2
+    assert recalls[1]["profile_fields"] == 0                 # only reported when injected
 
 
 def test_prefetch_injects_profile_once_as_background_block(vity_module, monkeypatch):
@@ -621,22 +777,50 @@ def test_session_reset_rearms_profile_injection(vity_module):
     assert provider._profile_context == "cached profile"  # cache preserved
 
 
-def test_strip_memory_context_prefix(vity_module):
-    strip = vity_module._strip_memory_context_prefix
-    raw = "[Memory context - use if relevant to the conversation]\n\nKey facts:\n- I am an intern."
-    out = strip(raw)
-    assert out.startswith("Key facts:")
-    assert "[Memory context" not in out
-    # No banner -> unchanged.
-    assert strip("Key facts:\n- x") == "Key facts:\n- x"
+# ---------------------------------------------------------------------------
+# Memory writes must survive process exit
+# ---------------------------------------------------------------------------
 
-
-def test_load_profile_strips_backend_banner(vity_module, monkeypatch):
+def test_shutdown_waits_for_inflight_memory_write(vity_module, monkeypatch):
+    # Regression: the built-in-memory mirror ran on an untracked daemon thread, so a
+    # fact saved just before exit (e.g. a one-shot turn) was killed before store().
+    import threading
+    import time as _time
+    stored = threading.Event()
     fake_client = MagicMock()
-    fake_client.recall.return_value = "[Memory context - use if relevant]\n\nKey facts:\n- I am an AI intern."
+    fake_client.store.side_effect = lambda **_: (_time.sleep(0.3), stored.set())
     provider = _provider_with_client(vity_module, monkeypatch, fake_client)
 
-    provider._load_profile()
+    provider.on_memory_write("add", "user", "favourite editor is Zed")
+    provider.shutdown()
 
-    assert provider._profile_context.startswith("Key facts:")
-    assert "[Memory context" not in provider._profile_context
+    assert stored.is_set(), "shutdown returned before the mirrored store() completed"
+    fake_client.store.assert_called_once_with(content="favourite editor is Zed", memory_type="preference")
+
+
+def test_shutdown_write_drain_is_bounded(vity_module, monkeypatch):
+    import threading
+    import time as _time
+    release = threading.Event()
+    fake_client = MagicMock()
+    fake_client.store.side_effect = lambda **_: release.wait(5)
+    provider = _provider_with_client(vity_module, monkeypatch, fake_client)
+    monkeypatch.setattr(vity_module, "_WRITE_DRAIN_TIMEOUT_S", 0.2)
+
+    provider.on_memory_write("add", "memory", "slow fact")
+    t0 = _time.monotonic()
+    provider.shutdown()
+    assert _time.monotonic() - t0 < 2.0          # a wedged backend never blocks exit
+    release.set()
+
+
+def test_exit_drain_registered_once(vity_module, monkeypatch):
+    registered = []
+    monkeypatch.setattr(vity_module.atexit, "register", lambda fn: registered.append(fn))
+    provider = vity_module.VityMemoryProvider()
+    monkeypatch.setattr(provider, "_warm_recall", lambda: None)
+
+    provider.initialize("s1")
+    provider.initialize("s2")                    # /new or a second session in one process
+
+    assert registered == [provider.shutdown]

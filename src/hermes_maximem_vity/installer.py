@@ -31,6 +31,7 @@ _LEGACY_PLUGIN_NAME = "vity"
 _FILES = {
     "provider.py": "__init__.py",   # the MemoryProvider Hermes loads
     "analytics.py": "analytics.py", # best-effort usage telemetry helper
+    "vity_support.py": "vity_support.py",  # stateless helpers the provider imports
     "cli.py": "cli.py",             # the `hermes maximem_vity` subcommands
     "plugin.yaml": "plugin.yaml",   # manifest (deps, required env)
     "vity.json.example": "vity.json.example",
@@ -183,18 +184,18 @@ def _hermes_python() -> str | None:
     return None
 
 
-# Run inside Hermes' interpreter: exits 0 only if the SDK imports AND is >= 0.3.0.
+# Run inside Hermes' interpreter: exits 0 only if the SDK imports AND is >= 0.3.1.
 # A bare import check let an old 0.2.x SDK pass, and the plugin then silently lost
 # recall (0.2.x lacks knowledge(), meetings_enabled(), per-call capture channel).
 _SDK_PROBE = (
-    "import maximem_vity, sys, importlib.metadata as m; "
-    "v = tuple(int(x) for x in m.version('maximem-vity-sdk').split('.')[:2]); "
-    "sys.exit(0 if v >= (0, 3) else 1)"
+    "import maximem_vity, re, sys, importlib.metadata as m; "
+    "v = tuple(int(x) for x in re.findall(r'\\d+', m.version('maximem-vity-sdk'))[:3]); "
+    "sys.exit(0 if v >= (0, 3, 1) else 1)"
 )
 
 
 def _sdk_ok(py: str) -> bool:
-    """True when Hermes' interpreter imports a compatible (>=0.3.0) SDK."""
+    """True when Hermes' interpreter imports a compatible (>=0.3.1) SDK."""
     return subprocess.run([py, "-c", _SDK_PROBE], capture_output=True).returncode == 0
 
 
@@ -216,7 +217,7 @@ def _install_sdk_into_hermes() -> bool:
     if _sdk_ok(py):
         return True
 
-    print("  installing/upgrading maximem-vity-sdk (>=0.3.0) in Hermes' environment…")
+    print("  installing/upgrading maximem-vity-sdk (>=0.3.1) in Hermes' environment…")
 
     # Make sure pip exists in that interpreter (venvs are often built without it).
     if subprocess.run([py, "-m", "pip", "--version"], capture_output=True).returncode != 0:
@@ -224,7 +225,7 @@ def _install_sdk_into_hermes() -> bool:
 
     try:
         proc = subprocess.run(
-            [py, "-m", "pip", "install", "maximem-vity-sdk>=0.3.0,<1"],
+            [py, "-m", "pip", "install", "maximem-vity-sdk>=0.3.1,<1"],
             capture_output=True, timeout=300,
         )
     except Exception:
@@ -317,7 +318,7 @@ def cmd_install(force: bool = False, api_key: str | None = None) -> int:
             hpy = _hermes_python()
             target_py = hpy or "<your hermes venv python>"
             print("  • Install the SDK into Hermes' interpreter:")
-            print(f"      {target_py} -m pip install 'maximem-vity-sdk>=0.3.0,<1'")
+            print(f"      {target_py} -m pip install 'maximem-vity-sdk>=0.3.1,<1'")
         if not key_ok:
             print("  • Add your API key:")
             print("      echo 'MAXIMEM_API_KEY=mx_...' >> ~/.hermes/.env")
@@ -380,7 +381,7 @@ def cmd_status() -> int:
         print("  SDK:      hermes interpreter not found (run `hermes` once?)")
     else:
         ok = _sdk_ok(py)
-        print(f"  SDK:      {'>=0.3.0 available to Hermes ✓' if ok else 'missing or older than 0.3.0 ✗ (run: hermes-maximem-vity install)'}")
+        print(f"  SDK:      {'>=0.3.1 available to Hermes ✓' if ok else 'missing or older than 0.3.1 ✗ (run: hermes-maximem-vity install)'}")
     return 0
 
 
