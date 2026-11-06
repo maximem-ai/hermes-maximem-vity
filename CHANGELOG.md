@@ -32,6 +32,7 @@
 - `hermes maximem_vity` commands print a one-line error on API failures instead of a traceback.
 - An invalid `vity.json` is reported in the log instead of being silently ignored.
 - `vity_forget` now requires a query.
+- With auto-capture on, the agent was told to call `vity_store` for every fact the user shared, although every turn is already captured. That cost a tool call per turn and saved facts twice. It now stores only when the user asks it to remember something; with auto-capture off the rule is unchanged.
 
 ## 1.3.0
 

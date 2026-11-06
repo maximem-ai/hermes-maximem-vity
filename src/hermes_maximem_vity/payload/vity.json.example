@@ -6,5 +6,6 @@
   "recall_timeout": 6.0,
   "recall_deadline": 3.0,
   "recall_min_score": 0.3,
-  "profile_warmup": true
+  "profile_warmup": true,
+  "live_context": true
 }
