@@ -762,8 +762,9 @@ class VityMemoryProvider(MemoryProvider):
 
         Uses ``search()`` (true semantic retrieval), drops the backend's
         synthesized placeholders, and dedupes the near-identical hits it
-        sometimes returns for one memory. Each memory keeps its ``created_at``
-        and ``score`` so callers can label how old and how relevant it is.
+        sometimes returns for one memory. Each memory keeps its dates
+        (``created_at``, ``chat_at``, ``happened_at``) and ``score`` so callers can
+        label how old (by when it was said) and how relevant it is.
 
         ``min_score`` is a relevance floor. It defaults to 0 (unfiltered) for
         explicit tool/CLI use; auto-recall passes a floor so weak matches don't
@@ -778,7 +779,8 @@ class VityMemoryProvider(MemoryProvider):
             content = (r.get("content") or "").strip()
             if content and content not in seen:
                 seen.add(content)
-                memories.append({"content": content, "created_at": r.get("created_at"), "score": r.get("score")})
+                memories.append({"content": content, "created_at": r.get("created_at"), "chat_at": r.get("chat_at"),
+                                 "happened_at": r.get("happened_at"), "score": r.get("score")})
         return memories
 
     def _recall_for_injection(self, query: str, top_k: int = 10) -> tuple:
@@ -1041,14 +1043,26 @@ class VityMemoryProvider(MemoryProvider):
         if support.is_hermes_notice(user_content):
             return
         now = int(time.time() * 1000)
+        said = self._turn_times(messages)
         self._enqueue_write({
             "kind": "capture",
             "session_key": session_id,
             "messages": [
-                {"role": "user", "content": user_content, "timestamp": now},
-                {"role": "assistant", "content": assistant_content, "timestamp": now + 1},
+                {"role": "user", "content": user_content, "timestamp": said.get("user") or now},
+                {"role": "assistant", "content": assistant_content, "timestamp": said.get("assistant") or now + 1},
             ],
         })
+
+    @staticmethod
+    def _turn_times(messages) -> Dict[str, int]:
+        """When this turn's user and assistant messages were said (epoch ms), from the last
+        message of each role in Hermes' list, when it carries a usable ``timestamp``."""
+        times: Dict[str, int] = {}
+        for m in reversed(messages if isinstance(messages, list) else []):
+            role = m.get("role") if isinstance(m, dict) else None
+            if role in ("user", "assistant") and role not in times:
+                times[role] = support.epoch_ms(m.get("timestamp"))
+        return {role: t for role, t in times.items() if t}
 
     # -- Session lifecycle ---------------------------------------------------
 
@@ -1239,7 +1253,7 @@ class VityMemoryProvider(MemoryProvider):
                     memories = self._dedupe_search(client, query, top_k)
                     if memories:
                         return json.dumps({"result": [
-                            {"memory": m["content"], "age": support.age_label(m["created_at"]) or None,
+                            {"memory": m["content"], "age": support.age_label(support.happened_ms(m)) or None,
                              "relevance": round(m["score"], 2) if isinstance(m["score"], (int, float)) else None}
                             for m in memories
                         ]})

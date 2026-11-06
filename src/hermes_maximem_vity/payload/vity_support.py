@@ -9,10 +9,12 @@ apart from provider.py so each piece is small and unit-testable on its own.
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import time
 from contextlib import contextmanager
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -183,10 +185,40 @@ def age_label(created_at_ms: Any, now_s: Optional[float] = None) -> str:
     return "just now"
 
 
+def happened_ms(memory: Dict[str, Any]) -> Any:
+    """When a memory was said (epoch ms), else when it was stored.
+
+    An old chat imported today is stored today but said long ago; its age must be the latter.
+    SDKs before ``happened_at``/``chat_at`` only send ``created_at``, which is then used.
+    """
+    return memory.get("happened_at") or memory.get("chat_at") or memory.get("created_at")
+
+
+#: Epoch values below this are seconds, not milliseconds (1e11 ms is March 1973).
+_SECONDS_CUTOFF = 1e11
+
+
+def epoch_ms(value: Any) -> Optional[int]:
+    """A message time as epoch ms, from seconds, ms or an ISO string; ``None`` when unusable.
+
+    A string without a zone is local time: Hermes stamps messages with ``datetime.now()``.
+    """
+    if isinstance(value, str):
+        try:
+            value = datetime.fromisoformat(value.strip().replace("Z", "+00:00")).timestamp()
+        except ValueError:
+            return None
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    if not math.isfinite(value) or value <= 0:
+        return None
+    return int(value * 1000) if value < _SECONDS_CUTOFF else int(value)
+
+
 def format_memory_line(memory: Dict[str, Any], now_s: Optional[float] = None) -> str:
     """One injected memory: ``- [3d ago · 82%] content`` (labels when known)."""
     labels = []
-    age = age_label(memory.get("created_at"), now_s)
+    age = age_label(happened_ms(memory), now_s)
     if age:
         labels.append(age)
     score = memory.get("score")
