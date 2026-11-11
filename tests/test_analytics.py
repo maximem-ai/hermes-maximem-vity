@@ -125,3 +125,12 @@ def test_send_sets_explicit_user_agent(analytics, monkeypatch):
     analytics._send("https://x/v1/telemetry", "mx_key", b"{}")
     assert sent["user-agent"].startswith("hermes-maximem-vity/")
     assert sent["authorization"] == "Bearer mx_key"
+
+
+def test_body_names_the_app_so_the_router_can_tell_hermes_apart(analytics, monkeypatch):
+    # The router files events under $source = properties.app, else a generic "maximem-plugin" that any
+    # client can land in. Vity MCP sends the same tool_called event, so Hermes must name itself.
+    sent = []
+    monkeypatch.setattr(analytics, "_send", lambda url, key, body: sent.append(body))
+    analytics.track("tool_called", api_key="mx_k", props={"tool": "vity_search", "app": "spoof"}, block=True)
+    assert json.loads(sent[0])["properties"]["app"] == "hermes-maximem-vity"

@@ -108,6 +108,9 @@ def track(event: str, api_key: str = "", props: dict | None = None, block: bool 
             "plugin_version": PLUGIN_VERSION,
             "$lib": "hermes-maximem-vity",
             **(props or {}),
+            # The router files events under $source = app. Last, so a prop can't relabel them: Vity MCP
+            # sends the same tool_called event and the dashboards split the two on this.
+            "app": "hermes-maximem-vity",
         },
     }).encode()
     if block:
