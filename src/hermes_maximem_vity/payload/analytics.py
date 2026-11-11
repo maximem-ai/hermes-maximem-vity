@@ -32,7 +32,7 @@ import urllib.request
 
 logger = logging.getLogger(__name__)
 
-PLUGIN_VERSION = "1.4.1"
+PLUGIN_VERSION = "1.4.2"
 
 # Telemetry is proxied through the Maximem router, which holds the PostHog key
 # server-side. No project key is shipped to user machines.
@@ -108,6 +108,9 @@ def track(event: str, api_key: str = "", props: dict | None = None, block: bool 
             "plugin_version": PLUGIN_VERSION,
             "$lib": "hermes-maximem-vity",
             **(props or {}),
+            # The router files events under $source = app. Last, so a prop can't relabel them: Vity MCP
+            # sends the same tool_called event and the dashboards split the two on this.
+            "app": "hermes-maximem-vity",
         },
     }).encode()
     if block:
