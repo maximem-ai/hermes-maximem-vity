@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.4.2
+
+### Fixed
+
+- Telemetry now names the app (`app: hermes-maximem-vity`). The Maximem router files events under
+  that label; without it they landed under a generic `maximem-plugin`, and Hermes tool usage could
+  not be told apart from Vity MCP on the dashboards.
+
 ## 1.4.1
 
 ### Changed
