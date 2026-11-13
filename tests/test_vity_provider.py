@@ -860,6 +860,29 @@ def test_first_turn_live_hit_injects_the_chat_and_skips_search(vity_module, monk
     assert HIT in out
 
 
+def test_host_prefetch_without_session_id_still_sends_this_sessions_key(vity_module, monkeypatch):
+    """Hermes calls prefetch_all(query) with no session_id (agent/turn_context.py). Without a key the
+    server cannot exclude Hermes's own chat and serves it back as earlier work."""
+    fake_client = MagicMock()
+    fake_client.live_context.return_value = ""
+    provider = _provider_with_client(vity_module, monkeypatch, fake_client)
+    monkeypatch.setattr(vity_module, "_load_config", lambda *_: {"api_key": "mx_test_key"})
+    provider.initialize("s1")
+    provider.prefetch("celery worker still crashing with the same TimeoutError")
+    assert fake_client.live_context.call_args.kwargs["session_key"] == "s1"
+
+    provider.on_session_switch("s2", reset=True)          # /new
+    provider.prefetch("a new conversation about deploys")
+    assert fake_client.live_context.call_args.kwargs["session_key"] == "s2"
+
+    provider.sync_turn("u", "a", session_id="s3")         # the per-turn id wins if it moved
+    provider.prefetch("next turn in that session please")
+    assert fake_client.live_context.call_args.kwargs["session_key"] == "s3"
+
+    provider.prefetch("an explicit id still wins over it", session_id="s4")
+    assert fake_client.live_context.call_args.kwargs["session_key"] == "s4"
+
+
 def test_first_turn_soft_hit_keeps_normal_search(vity_module, monkeypatch):
     fake_client = MagicMock()
     fake_client.live_context.return_value = SOFT

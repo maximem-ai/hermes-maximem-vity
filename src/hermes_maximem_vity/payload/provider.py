@@ -429,6 +429,8 @@ class VityMemoryProvider(MemoryProvider):
         self._auto_recall = True
         self._live_context = True
         self._auto_capture = True
+        # This session's id. The host calls prefetch() without one, so the live check falls back to it.
+        self._session_id = ""
         self._max_recall_tokens = _DEFAULT_MAX_RECALL_TOKENS
         self._min_prompt_length = _DEFAULT_MIN_PROMPT_LENGTH
         self._recall_timeout = _DEFAULT_RECALL_TIMEOUT
@@ -581,6 +583,7 @@ class VityMemoryProvider(MemoryProvider):
 
     def initialize(self, session_id: str, **kwargs) -> None:
         """Initialize Vity client for this session."""
+        self._session_id = session_id or ""
         config = _load_config(kwargs.get("hermes_home"))
         self._api_key = config.get("api_key", "")
         self._endpoint = config.get("endpoint", "")
@@ -942,6 +945,7 @@ class VityMemoryProvider(MemoryProvider):
         # Live work in another app: Vity checks a session's first turn, and any turn that names an app
         # ("continue my ChatGPT chat"); other turns cost one fast call that returns nothing. On a strong
         # first-turn hit that chat replaces this turn's search (no retrieval on top of it).
+        session_id = session_id or self._session_id
         live = self._live_within_deadline(query, session_id) if (not paused and self._live_context) else ""
         live_hit = 'tier="hit"' in live
         if live_hit:
@@ -1034,6 +1038,8 @@ class VityMemoryProvider(MemoryProvider):
         messages=None,
     ) -> None:
         """Queue this turn for capture (non-blocking; the writer thread sends it)."""
+        if session_id:
+            self._session_id = session_id
         # auto_capture off, or a non-primary context (cron/flush/subagent) whose
         # turns must not be written to the user's memory.
         if not self._auto_capture or not self._write_enabled:
@@ -1084,6 +1090,8 @@ class VityMemoryProvider(MemoryProvider):
         re-injected there too; the conversation itself continues, so the
         follow-up anchor is kept. Writes use the per-turn ``session_id``.
         """
+        if new_session_id:
+            self._session_id = new_session_id
         if reset or rewound:
             self._cold_start = True
             # A new conversation must not carry the old topic's anchor into the

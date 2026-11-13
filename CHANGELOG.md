@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.4.3
+
+### Fixed
+
+- Live context uses this session's id when Hermes calls `prefetch()` without one. Before, the check
+  sent no session id, so Vity could not tell this Hermes session's own chat from another app's: a
+  session could be offered back to itself.
+
 ## 1.4.2
 
 ### Fixed
