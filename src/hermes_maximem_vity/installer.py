@@ -150,7 +150,15 @@ def _ensure_api_key(api_key: str | None, login: bool = False) -> bool:
             print()
             return False
         if not entered:
-            return _browser_login()
+            if _browser_login():
+                return True
+            try:  # sign-in failed or is unavailable: a pasted key still works
+                entered = input("Paste a Maximem API key (mx_…) from https://app.maximem.ai/api-keys, or press Enter to skip: ").strip()
+            except (EOFError, KeyboardInterrupt):
+                print()
+                return False
+            if not entered:
+                return False
         _write_api_key(entered)
         print(f"✓ Saved MAXIMEM_API_KEY to {_env_path()}")
         return True

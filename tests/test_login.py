@@ -26,6 +26,8 @@ class Fake:
 
     def __init__(self):
         self.challenge = None
+        self.authorize_status = 302
+        self.agents = []
         self.token_status = 200
         self.token_body = None
         self.keys_status = 200
@@ -47,6 +49,7 @@ class Fake:
             def do_POST(self):  # noqa: N802
                 raw = self.rfile.read(int(self.headers.get("Content-Length") or 0))
                 fake.calls.append(("POST", self.path, raw, self.headers.get("Authorization")))
+                fake.agents.append(self.headers.get("User-Agent"))
                 if self.path == "/oauth/token":
                     form = dict(urllib.parse.parse_qsl(raw.decode()))
                     digest = base64.urlsafe_b64encode(hashlib.sha256(form["code_verifier"].encode()).digest()).rstrip(b"=").decode()
@@ -55,6 +58,18 @@ class Fake:
                     return self._reply(fake.token_status, fake.token_body or {"access_token": "setup-token"})
                 if self.path == "/v1/setup/keys":
                     return self._reply(fake.keys_status, fake.keys_body)
+                self._reply(404, None)
+
+            def do_GET(self):  # noqa: N802
+                fake.calls.append(("GET", self.path.split("?")[0], b"", None))
+                fake.agents.append(self.headers.get("User-Agent"))
+                if self.path.startswith("/oauth/authorize"):
+                    self.send_response(fake.authorize_status)
+                    if fake.authorize_status in (302, 303):
+                        self.send_header("Location", "/api/auth/google/start")
+                    self.send_header("Content-Length", "0")
+                    self.end_headers()
+                    return
                 self._reply(404, None)
 
             def do_DELETE(self):  # noqa: N802
@@ -128,7 +143,7 @@ def test_full_sign_in_sends_a_correct_pkce_s256_request(fake):
 def test_verifier_never_appears_in_the_authorize_url(fake):
     seen, open_url = browser(fake)
     sign_in(fake, open_url)
-    form = dict(urllib.parse.parse_qsl(fake.calls[0][2].decode()))
+    form = dict(urllib.parse.parse_qsl(next(c for c in fake.calls if c[1] == "/oauth/token")[2].decode()))
     assert form["code_verifier"] not in json.dumps({k: v for k, v in seen.items() if k != "thread"})
 
 
@@ -175,7 +190,7 @@ def test_browser_cancel_is_cancelled_and_no_token_request_is_made(fake):
 
     with pytest.raises(login.LoginError) as e:
         sign_in(fake, in_browser(fake, {}, visit))
-    assert e.value.reason == "cancelled" and fake.calls == []
+    assert e.value.reason == "cancelled" and not [c for c in fake.calls if c[0] == "POST"]
 
 
 def test_timeout_when_the_browser_never_comes_back(fake):
@@ -209,6 +224,32 @@ def test_unreachable_sign_in_server():
     with pytest.raises(login.LoginError) as e:
         login._exchange("http://127.0.0.1:9", {"a": "b"})
     assert e.value.reason == "unreachable"
+
+
+@pytest.mark.parametrize("status", [400, 404, 200, 500])
+def test_a_refused_sign_in_fails_fast_without_opening_the_browser(fake, status):
+    # e.g. the client is not registered on this server yet, or browser sign-in is switched off
+    fake.authorize_status = status
+    opened, lines = [], []
+    with pytest.raises(login.LoginError) as e:
+        login.browser_sign_in(auth_url=fake.url, resource="r", open_url=opened.append, log=lines.append, timeout_s=60)
+    assert e.value.reason == "unavailable" and opened == [] and lines == []
+
+
+def test_unreachable_server_fails_fast_without_opening_the_browser():
+    opened = []
+    with pytest.raises(login.LoginError) as e:
+        login.browser_sign_in(auth_url="http://127.0.0.1:9", resource="r", open_url=opened.append, log=lambda _l: None)
+    assert e.value.reason == "unreachable" and opened == []
+
+
+def test_every_request_names_the_plugin_not_python_urllib(fake):
+    # Cloudflare in front of prod answers 403 to the default Python-urllib agent.
+    _, open_url = browser(fake)
+    create_token = sign_in(fake, open_url)
+    login.create_hermes_key(create_token, api_url=fake.url, machine="Box", machine_id_value="a" * 32)
+    assert len(fake.agents) == 3  # authorize check, token, keys
+    assert all(a and a.startswith("hermes-maximem-vity/") for a in fake.agents), fake.agents
 
 
 # ---------------------------------------------------------------- key creation
@@ -327,6 +368,17 @@ def test_prompt_enter_signs_in_with_the_browser(home, monkeypatch):
     monkeypatch.setattr(login, "sign_in_for_hermes", lambda: ("me@example.com", KEY))
     assert installer._ensure_api_key(None) is True
     assert f"MAXIMEM_API_KEY={KEY}" in (home / ".env").read_text()
+
+
+def test_prompt_falls_back_to_pasting_when_sign_in_is_unavailable(home, monkeypatch):
+    answers = iter(["", "mx_pasted_key_value_1"])
+    monkeypatch.setattr(installer.sys.stdin, "isatty", lambda: True, raising=False)
+    monkeypatch.setattr(installer.sys.stdout, "isatty", lambda: True, raising=False)
+    monkeypatch.setattr("builtins.input", lambda _p: next(answers))
+    monkeypatch.setattr(login, "sign_in_for_hermes",
+                        lambda: (_ for _ in ()).throw(login.LoginError("unavailable", "Browser sign-in is not available right now.")))
+    assert installer._ensure_api_key(None) is True
+    assert "MAXIMEM_API_KEY=mx_pasted_key_value_1" in (home / ".env").read_text()
 
 
 def test_prompt_pasted_key_is_saved_without_signing_in(home, monkeypatch):

@@ -35,6 +35,8 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from typing import Callable
 
+from . import __version__
+
 CLIENT_ID = "maximem-hermes-plugin"
 APP = "hermes"
 SCOPE = "keys:create"
@@ -46,6 +48,8 @@ _CONFIRM_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 _KEY = re.compile(r"mx_[A-Za-z0-9_-]{10,}")  # always fullmatch: re.match lets "$" pass a trailing newline
 _EMAIL = re.compile(r"[^\s@]{1,64}@[^\s@]{1,255}")
 _MACHINE_ID = re.compile(r"[a-f0-9]{32}")
+# Cloudflare in front of the Maximem servers answers 403 to Python's default "Python-urllib" agent.
+USER_AGENT = f"hermes-maximem-vity/{__version__}"
 _PAGE = ('<!doctype html><meta charset="utf-8"><title>Maximem</title>'
          '<p style="font:16px system-ui;margin:3rem">{}</p>')
 
@@ -157,7 +161,7 @@ def _listen(state: str) -> tuple[HTTPServer, dict]:
 
 def _request(url: str, *, data: bytes | None = None, headers: dict | None = None,
              method: str = "GET") -> tuple[int, bytes]:
-    req = urllib.request.Request(url, data=data, headers=headers or {}, method=method)
+    req = urllib.request.Request(url, data=data, headers={"User-Agent": USER_AGENT, **(headers or {})}, method=method)
     try:
         with urllib.request.urlopen(req, timeout=REQUEST_S) as res:  # noqa: S310 (fixed https bases)
             return res.status, res.read()
@@ -165,6 +169,28 @@ def _request(url: str, *, data: bytes | None = None, headers: dict | None = None
         return e.code, b""
     except Exception:
         raise LoginError("unreachable", "Could not reach the Maximem server.") from None
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *args, **kwargs):  # report the 302 instead of following it
+        return None
+
+
+def _check_available(url: str) -> None:
+    """Ask the sign-in server once, before opening the browser, whether it accepts this sign-in.
+    An accepted request answers with a redirect (to sign-in or consent); a refused one (feature off,
+    client not registered yet) answers with an error page. Without this check the browser shows
+    that page and the terminal waits out the full timeout."""
+    try:
+        urllib.request.build_opener(_NoRedirect).open(
+            urllib.request.Request(url, headers={"User-Agent": USER_AGENT}), timeout=REQUEST_S).close()
+        status = 200
+    except urllib.error.HTTPError as e:
+        status = e.code
+    except Exception:
+        raise LoginError("unreachable", "Could not reach the Maximem sign-in server.") from None
+    if status not in (302, 303):
+        raise LoginError("unavailable", "Browser sign-in is not available right now.")
 
 
 def _exchange(auth_url: str, form: dict) -> str:
@@ -205,6 +231,7 @@ def browser_sign_in(*, auth_url: str | None = None, resource: str | None = None,
         if machine:
             params["machine"] = machine
         url = f"{base}/oauth/authorize?{urllib.parse.urlencode(params)}"
+        _check_available(url)
         log(f"Your confirmation code is {confirm}. Type it on the page to approve.")
         log(f"Opening your browser. If it does not open, go to:\n  {url}")
         open_url(url)
