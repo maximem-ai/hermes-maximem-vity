@@ -271,7 +271,7 @@ _ERROR_MESSAGES = {
     "VityAuthError": (
         AUTH_ERROR,
         "Maximem rejected the API key, so Vity memory is unavailable. "
-        "Fix it with: hermes-maximem-vity install --api-key mx_...",
+        "Fix it with: hermes-maximem-vity install --login (or --api-key mx_...)",
     ),
     "VityInsufficientCreditsError": (
         CREDITS_ERROR,

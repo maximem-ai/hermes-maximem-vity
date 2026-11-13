@@ -7,6 +7,7 @@ bridges the gap: it copies the bundled plugin payload into
 
 Usage:
     hermes-maximem-vity install      # copy plugin into ~/.hermes/plugins/maximem_vity/
+    hermes-maximem-vity install --login   # also sign in with the browser for a new API key
     hermes-maximem-vity uninstall    # remove it
     hermes-maximem-vity status       # show install location + state
 """
@@ -109,28 +110,50 @@ def _write_api_key(key: str) -> None:
         pass
 
 
-def _ensure_api_key(api_key: str | None) -> bool:
+def _browser_login() -> bool:
+    """Sign in with the browser and save the Hermes key it creates. False (with the reason) on failure."""
+    from .login import LoginError, sign_in_for_hermes
+    print()
+    try:
+        email, key = sign_in_for_hermes()
+    except LoginError as e:
+        print(f"✗ {e}")
+        return False
+    except KeyboardInterrupt:
+        print("\n✗ Sign-in cancelled.")
+        return False
+    _write_api_key(key)
+    print(f"✓ Signed in as {email}. Saved a new MAXIMEM_API_KEY to {_env_path()}")
+    return True
+
+
+def _ensure_api_key(api_key: str | None, login: bool = False) -> bool:
     """Make sure an API key is configured. Returns True if a key is now set.
 
-    Priority: --api-key flag > already-set > interactive prompt (tty only).
+    Priority: --api-key flag > --login > already-set > interactive prompt (tty only), where
+    pressing Enter signs in with the browser and pasting a key saves it.
     """
     if api_key:
         _write_api_key(api_key.strip())
         print(f"✓ Saved MAXIMEM_API_KEY to {_env_path()}")
         return True
+    if login:
+        return _browser_login() or _key_already_set()
     if _key_already_set():
-        print("✓ MAXIMEM_API_KEY already configured (pass --api-key mx_… to change it)")
+        print("✓ MAXIMEM_API_KEY already configured (run with --login, or --api-key mx_…, to change it)")
         return True
     # Prompt only on a real terminal, never hang on piped/buffered input.
     if sys.stdin.isatty() and sys.stdout.isatty():
         try:
-            entered = input("\nPaste your Maximem API key (mx_…) or press Enter to skip: ").strip()
+            entered = input("\nPress Enter to sign in with your browser, or paste a Maximem API key (mx_…): ").strip()
         except (EOFError, KeyboardInterrupt):
-            entered = ""
-        if entered:
-            _write_api_key(entered)
-            print(f"✓ Saved MAXIMEM_API_KEY to {_env_path()}")
-            return True
+            print()
+            return False
+        if not entered:
+            return _browser_login()
+        _write_api_key(entered)
+        print(f"✓ Saved MAXIMEM_API_KEY to {_env_path()}")
+        return True
     return False
 
 
@@ -258,7 +281,7 @@ def _activate_provider() -> bool:
         return False
 
 
-def cmd_install(force: bool = False, api_key: str | None = None) -> int:
+def cmd_install(force: bool = False, api_key: str | None = None, login: bool = False) -> int:
     payload = _payload_dir()
     if not payload.is_dir():
         print(f"✗ payload not found at {payload}. Is the install broken?", file=sys.stderr)
@@ -298,8 +321,8 @@ def cmd_install(force: bool = False, api_key: str | None = None) -> int:
     if sdk_ok:
         print("✓ SDK available to Hermes (maximem-vity-sdk)")
 
-    # 2) API key (flag > already-set > prompt), written deduped to ~/.hermes/.env
-    key_ok = _ensure_api_key(api_key)
+    # 2) API key (flag > browser sign-in > already-set > prompt), written deduped to ~/.hermes/.env
+    key_ok = _ensure_api_key(api_key, login=login)
 
     # 3) Activate non-interactively (avoids the fragile `hermes memory setup` wizard)
     activated = _activate_provider()
@@ -320,9 +343,10 @@ def cmd_install(force: bool = False, api_key: str | None = None) -> int:
             print("  • Install the SDK into Hermes' interpreter:")
             print(f"      {target_py} -m pip install 'maximem-vity-sdk>=0.3.1,<1'")
         if not key_ok:
-            print("  • Add your API key:")
-            print("      echo 'MAXIMEM_API_KEY=mx_...' >> ~/.hermes/.env")
-            print("      (get one at https://app.maximem.ai/api-keys)")
+            print("  • Sign in to get your API key:")
+            print("      hermes-maximem-vity install --login")
+            print("    or paste one from https://app.maximem.ai/api-keys:")
+            print("      hermes-maximem-vity install --api-key mx_...")
         if not activated:
             print("  • Activate the provider (hermes wasn't on PATH):")
             print(f"      hermes config set memory.provider {PLUGIN_NAME}")
@@ -393,14 +417,18 @@ def main(argv=None) -> int:
     sub = parser.add_subparsers(dest="cmd")
     p_install = sub.add_parser("install", help="Install + activate the plugin (one command)")
     p_install.add_argument("--force", action="store_true", help="Overwrite an existing install")
-    p_install.add_argument("--api-key", metavar="mx_…", default=None,
-                           help="Maximem API key, saved to ~/.hermes/.env (deduped)")
+    how = p_install.add_mutually_exclusive_group()
+    how.add_argument("--api-key", metavar="mx_…", default=None,
+                     help="Maximem API key, saved to ~/.hermes/.env (deduped)")
+    how.add_argument("--login", action="store_true",
+                     help="Sign in with your browser and save a new API key for Hermes")
     sub.add_parser("uninstall", help="Remove the plugin from ~/.hermes/plugins/maximem_vity/")
     sub.add_parser("status", help="Show install location and state")
 
     args = parser.parse_args(argv)
     if args.cmd == "install":
-        return cmd_install(force=getattr(args, "force", False), api_key=getattr(args, "api_key", None))
+        return cmd_install(force=getattr(args, "force", False), api_key=getattr(args, "api_key", None),
+                           login=getattr(args, "login", False))
     if args.cmd == "uninstall":
         return cmd_uninstall()
     if args.cmd == "status":

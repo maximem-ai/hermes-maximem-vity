@@ -15,7 +15,7 @@
 
 - Hermes Agent, with the `hermes` command on your `PATH`.
 - Python 3.10 or newer for the `pip install` step.
-- A Maximem API key. Create one at [app.maximem.ai/api-keys](https://app.maximem.ai/api-keys). It starts with `mx_`.
+- A Maximem account. The installer signs you in with your browser and creates an API key for Hermes. You can also paste a key from [app.maximem.ai/api-keys](https://app.maximem.ai/api-keys). It starts with `mx_`.
 - `maximem-vity-sdk` 0.3.1 or newer (below 1.0). The installer puts it in the environment that Hermes runs in. You do not install it by hand.
 
 ## Install
@@ -30,14 +30,26 @@ The `install` command does these steps:
 1. Copies the plugin files into `$HERMES_HOME/plugins/maximem_vity/`. The default `$HERMES_HOME` is `~/.hermes`, or `%LOCALAPPDATA%\hermes` on Windows. The file `provider.py` is installed as `__init__.py`, which is the name Hermes loads.
 2. Removes an old `plugins/vity` folder from earlier versions, if it exists.
 3. Installs `maximem-vity-sdk` into the Python environment that Hermes uses. If a compatible SDK is already there, it does nothing.
-4. Saves your API key as `MAXIMEM_API_KEY` in `$HERMES_HOME/.env`, without duplicate lines.
+4. Gets your API key, by browser sign-in or one you paste, and saves it as `MAXIMEM_API_KEY` in `$HERMES_HOME/.env`, without duplicate lines.
 5. Runs `hermes config set memory.provider maximem_vity` to turn the provider on.
 
 When all three of SDK, key and activation succeed, it prints a message that starts with `All set`. If one fails, it prints the exact command to finish that step by hand.
 
 ### Set your API key
 
-On a terminal, the installer asks for the key. You can press Enter to skip. In a script, or to replace a key, pass it as a flag:
+On a terminal, the installer asks how to get the key:
+
+- **Press Enter** to sign in with your browser. The terminal shows a confirmation code; type it on the sign-in page and approve. The installer creates a key named "Hermes (Vity setup, <computer name>)" and saves it. Signing in again on the same computer replaces that key, so old ones don't pile up.
+- **Paste a key** you created at app.maximem.ai/api-keys.
+- Press Ctrl+C to skip.
+
+To sign in again later and replace the key, or to sign in when a key is already saved:
+
+```bash
+hermes-maximem-vity install --login
+```
+
+In a script, pass a key as a flag:
 
 ```bash
 hermes-maximem-vity install --api-key mx_...
@@ -214,7 +226,7 @@ The installer command has its own subcommands:
 
 | Command | What it does |
 | --- | --- |
-| `hermes-maximem-vity install` | Installs and activates the plugin. Options: `--api-key mx_...`. |
+| `hermes-maximem-vity install` | Installs and activates the plugin. Options: `--login` (browser sign-in) or `--api-key mx_...`. |
 | `hermes-maximem-vity status` | Shows whether the plugin files are installed and whether Hermes can use the SDK. |
 | `hermes-maximem-vity uninstall` | Deletes the plugin folder. It does not change `memory.provider` or `$HERMES_HOME/.env`. |
 
@@ -263,8 +275,8 @@ The installer reads only the shell environment for this setting. To skip the `pl
 | `maximem-vity-sdk is not installed in Hermes' environment` | Hermes runs in its own environment, which is usually not the one `pip` used. Run `hermes-maximem-vity install`, then `hermes-maximem-vity status`. If it cannot find Hermes, it prints the `pip install` command to run with the Hermes interpreter. |
 | `SDK: missing or older than 0.3.1` | An old SDK is installed in Hermes' environment. Run `hermes-maximem-vity install`. |
 | `The Profile Card needs maximem-vity-sdk 0.3.1 or newer` | A partial upgrade left an old SDK in Hermes. Run `hermes-maximem-vity install`. Recall and capture keep working. |
-| `MAXIMEM_API_KEY is not set` | No key was found. Run `hermes-maximem-vity install --api-key mx_...`. |
-| `Maximem rejected the API key` | The key is wrong or revoked. Run `hermes-maximem-vity install --api-key mx_...` with a valid key and restart Hermes. |
+| `MAXIMEM_API_KEY is not set` | No key was found. Run `hermes-maximem-vity install --login`. |
+| `Maximem rejected the API key` | The key is wrong or revoked. Run `hermes-maximem-vity install --login` (or `--api-key mx_...` with a valid key) and restart Hermes. |
 | `The Maximem account is out of credits` | Add credits at [app.maximem.ai](https://app.maximem.ai), then restart Hermes. |
 | `Vity memory is rate-limited right now` or `The Vity memory service is unreachable right now` | A temporary service problem. Recall skips the turn, and capture retries and then saves the write for the next start. |
 | No `recalled N memories` line | Your Hermes may not support recall indicators, or nothing matched. Check `recall_min_score`. |

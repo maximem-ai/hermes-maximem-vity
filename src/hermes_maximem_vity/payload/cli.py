@@ -234,7 +234,7 @@ def maximem_vity_command(args) -> None:
     except Exception as e:
         hint = ""
         if any(c.__name__ == "VityAuthError" for c in type(e).__mro__):
-            hint = "\n  Fix the key: hermes-maximem-vity install --api-key mx_..."
+            hint = "\n  Fix the key: hermes-maximem-vity install --login (or --api-key mx_...)"
         print(f"✗ {e}{hint}", file=sys.stderr)
         sys.exit(1)
 
