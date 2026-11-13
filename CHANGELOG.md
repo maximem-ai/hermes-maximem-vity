@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.5.0
 
 ### Added
 
@@ -8,8 +8,16 @@
   instead of pasting a key: press Enter, type the code the terminal shows on the sign-in page, and
   the installer creates a key named "Hermes (Vity setup, <computer>)" and saves it to
   `~/.hermes/.env`. `install --login` signs in again and replaces that key. `--api-key` still works.
-  Needs the matching server change (client `maximem-hermes-plugin`); until it is deployed the
-  installer says browser sign-in is not available and you can paste a key.
+  Needs the matching server change (client `maximem-hermes-plugin`). Until the server accepts
+  the sign-in, the installer says so at once and asks for a pasted key instead.
+
+## 1.4.3
+
+### Fixed
+
+- Live context uses this session's id when Hermes calls `prefetch()` without one. Before, the check
+  sent no session id, so Vity could not tell this Hermes session's own chat from another app's: a
+  session could be offered back to itself.
 
 ## 1.4.2
 
