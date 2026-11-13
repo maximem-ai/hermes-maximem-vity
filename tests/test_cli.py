@@ -147,4 +147,4 @@ def test_api_errors_print_one_line_not_a_traceback(cli, monkeypatch, capsys):
     err = capsys.readouterr().err
     assert exc.value.code == 1
     assert err.startswith("✗ Invalid or revoked API key") and "Traceback" not in err
-    assert "hermes-maximem-vity install --api-key" in err
+    assert "hermes-maximem-vity install --login" in err

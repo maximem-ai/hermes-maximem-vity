@@ -502,8 +502,8 @@ class VityMemoryProvider(MemoryProvider):
     def unavailable_reason(self) -> str:
         """Why the provider can't run, shown by Hermes instead of a silent drop."""
         if not _load_config().get("api_key"):
-            return ("MAXIMEM_API_KEY is not set. Run: hermes-maximem-vity install "
-                    "--api-key mx_... (get a key at https://app.maximem.ai/api-keys)")
+            return ("MAXIMEM_API_KEY is not set. Run: hermes-maximem-vity install --login "
+                    "(or --api-key mx_... with a key from https://app.maximem.ai/api-keys)")
         import importlib.util
         try:
             sdk_present = importlib.util.find_spec("maximem_vity") is not None
@@ -1013,7 +1013,7 @@ class VityMemoryProvider(MemoryProvider):
         self._service_notice_shown = True
         reason = ("the Maximem API key was rejected" if self._service_issue == support.AUTH_ERROR
                   else "the Maximem account is out of credits")
-        fix = ("hermes-maximem-vity install --api-key mx_..." if self._service_issue == support.AUTH_ERROR
+        fix = ("hermes-maximem-vity install --login" if self._service_issue == support.AUTH_ERROR
                else "add credits at https://app.maximem.ai")
         return (
             f"## Vity Memory is unavailable\nLong-term memory is paused because {reason}. "

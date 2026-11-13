@@ -16,7 +16,13 @@ If Hermes or the gateway was running during install, restart it to load the prov
 
 ## Set or change your API key
 
-The installer prompts for the key. To set or replace it, pass it explicitly. It is written without duplicates, so no stale copies remain:
+On a terminal, the installer offers a browser sign-in: press Enter, sign in, and type the code it shows on the page. It creates a key for Hermes and saves it. To sign in again later and replace the key:
+
+```bash
+hermes-maximem-vity install --login
+```
+
+Or pass a key you already have. It is written without duplicates, so no stale copies remain:
 
 ```bash
 hermes-maximem-vity install --api-key mx_your_key

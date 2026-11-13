@@ -57,7 +57,7 @@ def test_classify_error_by_class_name_including_subclasses():
     class VityAuthError(VityError): ...
     class CustomAuth(VityAuthError): ...
     kind, message = support.classify_error(CustomAuth("401"))
-    assert kind == support.AUTH_ERROR and "hermes-maximem-vity install --api-key" in message
+    assert kind == support.AUTH_ERROR and "hermes-maximem-vity install --login" in message
     assert support.classify_error(RuntimeError("boom")) == ("other", "boom")
 
 

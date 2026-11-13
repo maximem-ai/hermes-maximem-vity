@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.5.0
+
+### Added
+
+- Browser sign-in. `hermes-maximem-vity install` now offers to sign you in with your browser
+  instead of pasting a key: press Enter, type the code the terminal shows on the sign-in page, and
+  the installer creates a key named "Hermes (Vity setup, <computer>)" and saves it to
+  `~/.hermes/.env`. `install --login` signs in again and replaces that key. `--api-key` still works.
+  Needs the matching server change (client `maximem-hermes-plugin`). Until the server accepts
+  the sign-in, the installer says so at once and asks for a pasted key instead.
+
 ## 1.4.3
 
 ### Fixed
