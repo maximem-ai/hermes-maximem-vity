@@ -641,8 +641,15 @@ class VityMemoryProvider(MemoryProvider):
             home = Path(kwargs.get("hermes_home") or get_hermes_home())
             self._pending_path = home / support.PENDING_WRITES_FILE
             try:
+                owner = support.write_owner(self._api_key, self._endpoint)
+                dropped = 0
                 for job in support.take_pending_writes(self._pending_path):
+                    if job.get("owner") != owner:
+                        dropped += 1  # another key or server, or an untagged older write: never replayed
+                        continue
                     self._enqueue_write(job)
+                if dropped:
+                    logger.warning("Vity dropped %d undelivered writes saved for another key or server", dropped)
             except Exception as e:
                 logger.warning("Vity could not replay pending writes: %s", e)
 
@@ -1208,8 +1215,9 @@ class VityMemoryProvider(MemoryProvider):
     def _persist_pending(self, jobs: List[Dict[str, Any]]) -> None:
         if not jobs or self._pending_path is None:
             return
+        owner = support.write_owner(self._api_key, self._endpoint)
         try:
-            support.save_pending_writes(self._pending_path, jobs)
+            support.save_pending_writes(self._pending_path, [{**job, "owner": owner} for job in jobs])
         except Exception as e:
             logger.warning("Vity could not save %d undelivered writes: %s", len(jobs), e)
 

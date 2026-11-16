@@ -73,10 +73,15 @@ def test_failed_write_is_saved_for_replay(vity_module, monkeypatch, tmp_path):
     assert "fact during an outage" in (tmp_path / "pending.jsonl").read_text()
 
 
+def _saved_for(vity_module, api_key, endpoint, content):
+    owner = vity_module.support.write_owner(api_key, endpoint)
+    return {"kind": "store", "content": content, "memory_type": "fact", "owner": owner}
+
+
 def test_initialize_replays_pending_file_from_hermes_home(vity_module, monkeypatch, tmp_path):
     vity_module.support.save_pending_writes(
         tmp_path / vity_module.support.PENDING_WRITES_FILE,
-        [{"kind": "store", "content": "saved last time", "memory_type": "fact"}])
+        [_saved_for(vity_module, "mx_test_key", "", "saved last time")])
     monkeypatch.setenv("MAXIMEM_API_KEY", "mx_test_key")
     client = MagicMock()
     provider = _provider(vity_module, monkeypatch, client)
@@ -87,6 +92,57 @@ def test_initialize_replays_pending_file_from_hermes_home(vity_module, monkeypat
 
     client.store.assert_called_once_with(content="saved last time", memory_type="fact")
     assert not (tmp_path / vity_module.support.PENDING_WRITES_FILE).exists()
+
+
+def test_a_saved_write_is_tagged_with_its_key_and_server_not_the_key_itself(vity_module, monkeypatch, tmp_path):
+    monkeypatch.setattr(vity_module.time, "sleep", lambda s: None)
+    down = MagicMock()
+    down.store.side_effect = VityUnavailableError("down")
+    provider = _provider(vity_module, monkeypatch, down, _pending_path=tmp_path / "p.jsonl", _endpoint="http://localhost:8197")
+    provider.on_memory_write("add", "memory", "fact during an outage")
+    provider._write_queue.join()
+    text = (tmp_path / "p.jsonl").read_text()
+    assert json.loads(text)["owner"] == vity_module.support.write_owner("mx_test_key", "http://localhost:8197")
+    assert "mx_test_key" not in text
+
+
+# Found 2026-11-16: a capture that failed against a local server under one key was replayed to prod
+# under the key set afterwards. With two accounts, one account's chat would land in the other.
+@pytest.mark.parametrize("saved_key,saved_endpoint", [
+    ("mx_other_account_key", ""),                 # the key was changed to another account
+    ("mx_test_key", "http://localhost:8197"),     # same key, but it was meant for another server
+])
+def test_writes_saved_for_another_key_or_server_are_dropped_not_replayed(
+        vity_module, monkeypatch, tmp_path, saved_key, saved_endpoint):
+    pending = tmp_path / vity_module.support.PENDING_WRITES_FILE
+    vity_module.support.save_pending_writes(pending, [
+        _saved_for(vity_module, saved_key, saved_endpoint, "someone else's fact"),
+        _saved_for(vity_module, "mx_test_key", "", "my own fact"),
+    ])
+    monkeypatch.setenv("MAXIMEM_API_KEY", "mx_test_key")
+    client = MagicMock()
+    provider = _provider(vity_module, monkeypatch, client)
+    monkeypatch.setattr(provider, "_warm_recall", lambda: None)
+
+    provider.initialize("s1", hermes_home=str(tmp_path))
+    provider._write_queue.join()
+
+    client.store.assert_called_once_with(content="my own fact", memory_type="fact")
+    assert not pending.exists()                                # dropped, not kept for a later key
+
+
+def test_untagged_writes_from_an_older_version_are_dropped(vity_module, monkeypatch, tmp_path):
+    pending = tmp_path / vity_module.support.PENDING_WRITES_FILE
+    vity_module.support.save_pending_writes(pending, [{"kind": "store", "content": "who wrote this?", "memory_type": "fact"}])
+    monkeypatch.setenv("MAXIMEM_API_KEY", "mx_test_key")
+    client = MagicMock()
+    provider = _provider(vity_module, monkeypatch, client)
+    monkeypatch.setattr(provider, "_warm_recall", lambda: None)
+
+    provider.initialize("s1", hermes_home=str(tmp_path))
+    provider._write_queue.join()
+
+    client.store.assert_not_called()
 
 
 def test_auth_failure_is_not_saved_for_replay(vity_module, monkeypatch, tmp_path):
