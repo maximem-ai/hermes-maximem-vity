@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.5.1
+
+### Fixed
+
+- A write that could not be delivered is replayed only under the API key and server it was made
+  for. Before, changing the key replayed old writes into the new account, which caused duplicate
+  memories.
+- The installer shows which key is already saved before asking whether to replace it.
+
 ## 1.5.0
 
 ### Added
