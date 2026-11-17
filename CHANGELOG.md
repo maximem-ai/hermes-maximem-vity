@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- `hermes-maximem-vity uninstall` now undoes what install did. Before, it removed only the plugin
+  folder, so Hermes kept `memory.provider: maximem_vity` pointing at a plugin that was gone, and
+  the saved `MAXIMEM_API_KEY` made a later reinstall skip sign-in. Uninstall now clears
+  `memory.provider` when it is `maximem_vity` (another provider is left alone) and removes the
+  `MAXIMEM_API_KEY` line from `$HERMES_HOME/.env`, keeping every other line. It prints what it
+  removed.
+
 ## 1.5.1
 
 ### Fixed
