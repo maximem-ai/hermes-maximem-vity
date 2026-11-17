@@ -139,8 +139,25 @@ def _ensure_api_key(api_key: str | None, login: bool = False) -> bool:
         return True
     if login:
         return _browser_login() or _key_already_set()
-    if _key_already_set():
-        print("✓ MAXIMEM_API_KEY already configured (run with --login, or --api-key mx_…, to change it)")
+    existing = _existing_key()
+    if existing:
+        shown = existing[:8] + "…"  # enough to tell keys apart, never the whole key
+        # On a terminal, say which key is saved and let the user swap it: a key left from another setup
+        # (another account, a test server) was otherwise kept silently.
+        if sys.stdin.isatty() and sys.stdout.isatty():
+            try:
+                entered = input(f"\nA Maximem API key is already saved ({shown}). Press Enter to keep it, "
+                                "paste a new key (mx_…), or type login to sign in again: ").strip()
+            except (EOFError, KeyboardInterrupt):
+                print()
+                entered = ""
+            if entered.lower() == "login":
+                return _browser_login() or _key_already_set()
+            if entered:
+                _write_api_key(entered)
+                print(f"✓ Saved MAXIMEM_API_KEY to {_env_path()}")
+                return True
+        print(f"✓ Using the saved MAXIMEM_API_KEY ({shown}). To change it, run with --login or --api-key mx_…")
         return True
     # Prompt only on a real terminal, never hang on piped/buffered input.
     if sys.stdin.isatty() and sys.stdout.isatty():

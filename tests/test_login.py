@@ -395,6 +395,38 @@ def test_an_existing_key_is_kept_without_prompting_or_signing_in(home, monkeypat
     assert installer._ensure_api_key(None) is True
 
 
+# Found 2026-11-16: re-running the installer kept an old key from another setup without a word, so
+# Hermes kept writing to whichever account that key belonged to.
+def test_no_terminal_says_which_saved_key_it_kept_without_printing_it(home, monkeypatch, capsys):
+    (home / ".env").write_text("MAXIMEM_API_KEY=mx_old_key_value_123\n")
+    assert installer._ensure_api_key(None) is True
+    out = capsys.readouterr().out
+    assert "mx_old_k" in out and "mx_old_key_value_123" not in out
+
+
+def test_terminal_enter_keeps_the_saved_key(home, monkeypatch, capsys):
+    (home / ".env").write_text("MAXIMEM_API_KEY=mx_old_key_value_123\n")
+    _tty(monkeypatch, "")
+    monkeypatch.setattr(login, "sign_in_for_hermes", lambda: pytest.fail("must not sign in"))
+    assert installer._ensure_api_key(None) is True
+    assert "MAXIMEM_API_KEY=mx_old_key_value_123" in (home / ".env").read_text()
+
+
+def test_terminal_pasting_a_key_replaces_the_saved_one(home, monkeypatch):
+    (home / ".env").write_text("MAXIMEM_API_KEY=mx_old_key_value_123\n")
+    _tty(monkeypatch, "mx_pasted_key_value_1")
+    assert installer._ensure_api_key(None) is True
+    assert (home / ".env").read_text() == "MAXIMEM_API_KEY=mx_pasted_key_value_1\n"
+
+
+def test_terminal_login_replaces_the_saved_key_with_a_new_sign_in(home, monkeypatch):
+    (home / ".env").write_text("MAXIMEM_API_KEY=mx_old_key_value_123\n")
+    _tty(monkeypatch, "login")
+    monkeypatch.setattr(login, "sign_in_for_hermes", lambda: ("me@example.com", KEY))
+    assert installer._ensure_api_key(None) is True
+    assert f"MAXIMEM_API_KEY={KEY}" in (home / ".env").read_text()
+
+
 def test_no_terminal_never_prompts_or_opens_a_browser(home, monkeypatch):
     monkeypatch.setattr(installer.sys.stdin, "isatty", lambda: False, raising=False)
     monkeypatch.setattr(login, "sign_in_for_hermes", lambda: pytest.fail("must not sign in"))

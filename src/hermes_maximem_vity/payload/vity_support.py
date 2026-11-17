@@ -8,6 +8,7 @@ apart from provider.py so each piece is small and unit-testable on its own.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import os
@@ -303,6 +304,14 @@ def classify_error(exc: BaseException) -> Tuple[str, str]:
 # bounded so a long outage can't grow it without limit.
 
 PENDING_WRITES_FILE = "vity_pending_writes.jsonl"
+
+
+def write_owner(api_key: str, endpoint: str) -> str:
+    """Which key and server a saved write was made for, as a short hash (never the key itself).
+    A write is replayed only under the same owner: after a key change to another account, or a move
+    from a local server to prod, replaying would put this conversation into the wrong place."""
+    return hashlib.sha256(f"{endpoint or ''}\n{api_key or ''}".encode("utf-8")).hexdigest()[:16]
+
 PENDING_WRITES_MAX = 200
 _LOCK_WAIT_S = 5.0
 _LOCK_STALE_S = 30.0  # a lock older than this was left by a crashed process
