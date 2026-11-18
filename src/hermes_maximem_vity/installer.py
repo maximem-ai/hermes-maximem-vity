@@ -8,7 +8,7 @@ bridges the gap: it copies the bundled plugin payload into
 Usage:
     hermes-maximem-vity install      # copy plugin into ~/.hermes/plugins/maximem_vity/
     hermes-maximem-vity install --login   # also sign in with the browser for a new API key
-    hermes-maximem-vity uninstall    # remove it
+    hermes-maximem-vity uninstall    # remove it, its memory.provider setting and its saved key
     hermes-maximem-vity status       # show install location + state
 """
 
@@ -407,6 +407,44 @@ def _track_install(*, sdk_ok: bool, key_ok: bool, activated: bool, api_key: str 
         pass
 
 
+def _remove_api_key() -> bool:
+    """Drop every MAXIMEM_API_KEY line from ~/.hermes/.env; leave all other lines as they are."""
+    env = _env_path()
+    if not env.exists():
+        return False
+    lines = env.read_text(errors="replace").splitlines(keepends=True)
+    kept = [line for line in lines if not line.strip().startswith("MAXIMEM_API_KEY=")]
+    if len(kept) == len(lines):
+        return False
+    env.write_text("".join(kept))
+    return True
+
+
+def _deactivate_provider() -> str:
+    """Undo ``_activate_provider``: clear ``memory.provider`` only while it names this plugin.
+
+    Uses the same hermes CLI as install ("" is what ``hermes memory setup`` writes for built-in
+    only). Returns "cleared", "other" (another provider is selected, left alone) or "failed".
+    """
+    hermes = shutil.which("hermes")
+    if not hermes:
+        return "failed"
+    try:
+        got = subprocess.run(
+            [hermes, "config", "get", "memory.provider"],
+            check=True, capture_output=True, text=True, timeout=60,
+        )
+        if got.stdout.strip() != PLUGIN_NAME:
+            return "other"
+        subprocess.run(
+            [hermes, "config", "set", "memory.provider", ""],
+            check=True, capture_output=True, timeout=60,
+        )
+        return "cleared"
+    except Exception:
+        return "failed"
+
+
 def cmd_uninstall() -> int:
     target = _target_dir()
     if target.exists():
@@ -414,6 +452,16 @@ def cmd_uninstall() -> int:
         print(f"✓ Removed {target}")
     else:
         print("Vity plugin is not installed.")
+
+    state = _deactivate_provider()
+    if state == "cleared":
+        print(f"✓ Cleared memory.provider (was {PLUGIN_NAME}); Hermes uses its built-in memory")
+    elif state == "failed":
+        print(f"  Could not check memory.provider. If it is {PLUGIN_NAME}, clear it:")
+        print('      hermes config set memory.provider ""')
+
+    if _remove_api_key():
+        print(f"✓ Removed MAXIMEM_API_KEY from {_env_path()}")
     return 0
 
 

@@ -228,7 +228,7 @@ The installer command has its own subcommands:
 | --- | --- |
 | `hermes-maximem-vity install` | Installs and activates the plugin. Options: `--login` (browser sign-in) or `--api-key mx_...`. |
 | `hermes-maximem-vity status` | Shows whether the plugin files are installed and whether Hermes can use the SDK. |
-| `hermes-maximem-vity uninstall` | Deletes the plugin folder. It does not change `memory.provider` or `$HERMES_HOME/.env`. |
+| `hermes-maximem-vity uninstall` | Deletes the plugin folder, clears `memory.provider` if it is `maximem_vity` (Hermes goes back to its built-in memory), and removes the `MAXIMEM_API_KEY` line from `$HERMES_HOME/.env`. Other settings and lines are left as they are. |
 
 To turn the provider on again, run:
 
