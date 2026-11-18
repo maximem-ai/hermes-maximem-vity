@@ -311,6 +311,8 @@ def _cmd_restore(deletion_id, ids) -> None:
         for f in failed:
             reason = f.get("reason", "")
             print(f"  {f.get('id', '')}: {_RESTORE_REASONS.get(reason, reason)}")
+        if not restored:
+            sys.exit(1)
 
 
 def maximem_vity_command(args) -> None:

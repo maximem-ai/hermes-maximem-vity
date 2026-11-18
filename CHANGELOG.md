@@ -13,7 +13,10 @@ deployed.
   `hermes maximem_vity restore <deletion id>` or at app.maximem.ai."
 - The agent never deletes. `vity_forget` with `dry_run` false files a deletion request that you
   approve or reject in the dashboard, and tells you so. It sends `X-Maximem-Agent: hermes_tool`,
-  so the server enforces it and the dashboard shows the request as from Hermes.
+  so the server enforces it and the dashboard shows the request as from Hermes. It previews first
+  and files the request only if the server returns a preview token; an older server (which would
+  ignore the request mode and delete for real) gets nothing but the preview, and the agent is told
+  that nothing was deleted.
 - Hermes' built-in memory removals are no longer mirrored to Vity. When Hermes' own memory removes
   or replaces a fact, nothing is deleted or requested in Vity (a replace still stores the new
   text). Only an explicit `vity_forget` removes anything from Vity.
@@ -23,7 +26,8 @@ deployed.
 ### Added
 
 - `hermes maximem_vity restore <deletion id>` and `restore --ids <memory id> ...`: bring forgotten
-  memories back from the trash within 30 days, and say which could not come back and why.
+  memories back from the trash within 30 days, and say which could not come back and why. It
+  exits 1 when nothing was restored.
 
 ## 1.5.2
 

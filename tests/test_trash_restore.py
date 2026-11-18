@@ -245,6 +245,23 @@ def test_restore_by_memory_ids_reports_what_could_not_come_back(cli, monkeypatch
     assert "m3: not in the trash" in out and "m4: not found" in out
 
 
+def test_restore_that_restored_nothing_exits_1(cli, monkeypatch, capsys):
+    _api(monkeypatch, cli, {"restored": [], "notRestorable": [{"id": "m2", "reason": "past_window"}]})
+    with pytest.raises(SystemExit) as exc:
+        cli.maximem_vity_command(SimpleNamespace(vity_subcommand="restore", deletion_id=None, ids=["m2"]))
+    assert exc.value.code == 1
+    assert "m2: past the 30-day restore window" in capsys.readouterr().out
+
+
+def test_forget_yes_on_an_old_server_deletes_nothing(cli, monkeypatch, capsys):
+    """An old router's dry run has no token field at all: --yes must stop after the preview."""
+    old_preview = {k: v for k, v in PREVIEW.items() if k not in ("token", "tokenExpiresAt")}
+    calls = _api(monkeypatch, cli, old_preview)
+    cli._cmd_forget("chai", confirm=True)
+    assert calls == [("/v1/memory/forget", {"query": "chai", "dryRun": True}, False)]
+    assert "Nothing was deleted" in capsys.readouterr().out
+
+
 def test_restore_parser_takes_a_deletion_id_or_memory_ids(cli):
     import argparse
     parser = argparse.ArgumentParser()
@@ -285,17 +302,31 @@ def _agent(vity_module, monkeypatch, *responses):
 
 
 def test_agent_forget_files_a_request_never_a_delete(vity_module, monkeypatch):
-    provider, client, calls = _agent(vity_module, monkeypatch, {
+    provider, client, calls = _agent(vity_module, monkeypatch, PREVIEW, {
         "requestId": "r1", "count": 2, "status": "pending", "expiresAt": "2026-11-25T00:00:00+00:00",
         "approveUrl": "https://app.maximem.ai/memories?tab=pending"})
 
     out = json.loads(provider.handle_tool_call("vity_forget", {"query": "chai", "dry_run": False}))
 
-    assert calls == [("/v1/memory/forget", {"query": "chai", "mode": "request"}, True)]
+    assert calls == [("/v1/memory/forget", {"query": "chai", "dryRun": True}, True),
+                     ("/v1/memory/forget", {"query": "chai", "mode": "request"}, True)]
     client.forget.assert_not_called()
     assert "I asked to delete 2 memories" in out["result"]
     assert "https://app.maximem.ai/memories?tab=pending" in out["result"]
     assert "Nothing is deleted until the user approves" in out["result"]
+
+
+def test_agent_forget_on_an_old_server_deletes_nothing(vity_module, monkeypatch):
+    """An old router ignores ``mode`` and would delete for real. Its dry run carries no token, so the
+    agent must stop there and never send the non-dry-run call."""
+    old_preview = {k: v for k, v in PREVIEW.items() if k not in ("token", "tokenExpiresAt")}
+    provider, client, calls = _agent(vity_module, monkeypatch, old_preview)
+
+    out = json.loads(provider.handle_tool_call("vity_forget", {"query": "chai", "dry_run": False}))
+
+    assert calls == [("/v1/memory/forget", {"query": "chai", "dryRun": True}, True)]
+    client.forget.assert_not_called()
+    assert "Nothing was deleted" in out["error"] and "safe deletion" in out["error"]
 
 
 def test_agent_forget_dry_run_previews_with_the_agent_header(vity_module, monkeypatch):

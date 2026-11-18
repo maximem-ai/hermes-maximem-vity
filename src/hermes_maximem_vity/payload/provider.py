@@ -1281,9 +1281,17 @@ class VityMemoryProvider(MemoryProvider):
                 # An agent never deletes: dry_run=false files a request the user approves in the
                 # dashboard (the agent header makes the server enforce it whatever mode says).
                 dry_run = args.get("dry_run", True) is not False
-                body = {"query": query, "dryRun": True} if dry_run else {"query": query, "mode": "request"}
                 try:
-                    result = support.api_post(client, "/v1/memory/forget", body, agent=True) or {}
+                    result = support.api_post(client, "/v1/memory/forget",
+                                              {"query": query, "dryRun": True}, agent=True) or {}
+                    if not dry_run and result.get("count", 0):
+                        # An older server ignores mode and would delete for real; only a server whose
+                        # dry run returns a token knows deletion requests, so without one, stop here.
+                        if not result.get("token"):
+                            return tool_error("This Vity server does not support safe deletion yet. Nothing "
+                                              "was deleted; the user can delete memories at app.maximem.ai.")
+                        result = support.api_post(client, "/v1/memory/forget",
+                                                  {"query": query, "mode": "request"}, agent=True) or {}
                 except Exception as e:
                     return self._tool_failure("Forget", e)
                 count = result.get("count", 0)
