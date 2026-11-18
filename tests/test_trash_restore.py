@@ -64,7 +64,7 @@ def test_api_post_sends_body_auth_and_agent_header():
     assert seen["path"] == "/v1/memory/forget"
     assert seen["body"] == {"query": "chai", "mode": "request"}
     assert seen["headers"]["authorization"] == "Bearer mx_test_key"
-    assert seen["headers"]["x-maximem-agent"] == "mcp"
+    assert seen["headers"]["x-maximem-agent"] == "hermes_tool"
 
 
 def test_api_post_without_agent_sends_no_agent_header():
@@ -326,26 +326,13 @@ def test_tool_description_says_the_user_approves(vity_module):
     assert "never deletes" in description and "approves" in description
 
 
-def test_mirrored_remove_files_a_request_for_exactly_the_verified_memories(vity_module, monkeypatch):
-    preview = {**PREVIEW, "count": 1, "ids": ["m1"], "memories": PREVIEW["memories"][:1]}
-    provider, client, calls = _agent(vity_module, monkeypatch, preview, {"requestId": "r1", "count": 1})
-    client.search.return_value = [{"id": "m1", "content": "User drinks masala chai before standup."}]
-
-    provider.on_memory_write("remove", "user", "", metadata={"old_text": "I drink masala chai before standup."})
+@pytest.mark.parametrize("action,content", [("remove", ""), ("replace", "I drink green tea before standup.")])
+def test_builtin_memory_removals_never_reach_vity(vity_module, monkeypatch, action, content):
+    """Only an explicit vity_forget files a request: Hermes dropping a fact from its own memory files
+    nothing (no request, no delete, no search)."""
+    provider, client, calls = _agent(vity_module, monkeypatch)
+    provider.on_memory_write(action, "user", content, metadata={"old_text": "I drink masala chai before standup."})
     provider._write_queue.join()
-
-    q = "I drink masala chai before standup."
-    assert calls == [("/v1/memory/forget", {"query": q, "dryRun": True}, True),
-                     ("/v1/memory/forget", {"query": q, "token": "tok-1", "mode": "request"}, True)]
+    assert calls == []
     client.forget.assert_not_called()
-
-
-def test_mirrored_remove_skips_when_the_preview_has_other_memories(vity_module, monkeypatch):
-    provider, client, calls = _agent(vity_module, monkeypatch, PREVIEW)
-    client.search.return_value = [{"id": "m1", "content": "User drinks masala chai before standup."},
-                                  {"id": "m2", "content": "User drinks coffee after lunch."}]
-
-    provider.on_memory_write("remove", "user", "", metadata={"old_text": "I drink masala chai before standup."})
-    provider._write_queue.join()
-
-    assert len(calls) == 1   # the dry run only
+    client.search.assert_not_called()

@@ -1115,20 +1115,16 @@ class VityMemoryProvider(MemoryProvider):
     def on_memory_write(self, action, target, content, metadata=None):
         """Mirror Hermes' built-in memory writes into Vity.
 
-        - ``add``: store the fact.
-        - ``replace``: store the new text, then remove the old one if it can be
-          matched exactly (``metadata["old_text"]``), so recall doesn't return
-          both the outdated and the current version.
-        - ``remove``: remove the matching memory, same exact-match rule.
+        - ``add`` / ``replace``: store the (new) fact.
+        - Removals are NOT mirrored: when Hermes' own memory drops or replaces a
+          fact, the copy in Vity stays. Only an explicit ``vity_forget`` (a
+          request the user approves) removes anything from Vity.
         """
         if not self._auto_capture or not self._write_enabled:
             return
-        old_text = str((metadata or {}).get("old_text") or "").strip()
         memory_type = "preference" if target == "user" else "fact"
         if action in ("add", "replace") and content:
             self._enqueue_write({"kind": "store", "content": content, "memory_type": memory_type})
-        if action in ("replace", "remove") and old_text:
-            self._enqueue_write({"kind": "remove", "old_text": old_text})
 
     # -- Write queue -----------------------------------------------------------
 
@@ -1190,32 +1186,6 @@ class VityMemoryProvider(MemoryProvider):
             client.capture(messages=job["messages"], agent_id="hermes", session_key=job["session_key"])
         elif job["kind"] == "store":
             client.store(content=job["content"], memory_type=job["memory_type"])
-        elif job["kind"] == "remove":
-            self._remove_matching_memory(client, job["old_text"])
-
-    def _remove_matching_memory(self, client, old_text: str) -> None:
-        """Ask to delete the stored copy of ``old_text``, only when it matches exactly.
-
-        The agent never deletes: this files a deletion request the user approves
-        in the dashboard. A query can match more than the intended fact, so we
-        preview the matches and file the request only if EVERY one is confirmed
-        (by a decrypted search) to be a near-verbatim copy of ``old_text``. The
-        preview's token makes the request hold exactly those memories.
-        """
-        forget = "/v1/memory/forget"
-        preview = support.api_post(client, forget, {"query": old_text, "dryRun": True}, agent=True) or {}
-        doomed = {str(i) for i in (preview.get("ids") or [])}
-        if not doomed or not preview.get("token"):
-            return
-        confirmed = {
-            str(r.get("id")) for r in (client.search(query=old_text, top_k=10) or [])
-            if support.is_same_fact(r.get("content") or "", old_text)
-        }
-        if not doomed <= confirmed:
-            logger.info("Vity skipped removing %d memories: not all were an exact match", len(doomed))
-            return
-        support.api_post(client, forget, {"query": old_text, "token": preview["token"], "mode": "request"},
-                         agent=True)
 
     def _persist_pending(self, jobs: List[Dict[str, Any]]) -> None:
         if not jobs or self._pending_path is None:

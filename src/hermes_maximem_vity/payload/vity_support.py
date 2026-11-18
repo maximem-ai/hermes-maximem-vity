@@ -231,37 +231,6 @@ def format_memory_line(memory: Dict[str, Any], now_s: Optional[float] = None) ->
 
 
 # ---------------------------------------------------------------------------
-# Fact matching (for mirroring built-in memory 'replace' / 'remove')
-# ---------------------------------------------------------------------------
-
-# Words that carry no fact: the subject (the backend rewrites "I" to "User") and
-# filler. Everything else must match exactly for two facts to count as the same.
-_FILLER_WORDS = frozenset({
-    "i", "im", "my", "me", "user", "users", "the", "a", "an", "is", "am", "are", "was",
-    "be", "to", "of", "and", "that", "it", "with", "for", "in", "on", "at",
-})
-
-
-def _fact_words(text: str) -> frozenset:
-    words = re.findall(r"[a-z0-9]+", (text or "").lower())
-    # Naive stemming so "drink"/"drinks" and "theme"/"themes" compare equal.
-    return frozenset(w[:-1] if len(w) > 3 and w.endswith("s") else w
-                     for w in words if w not in _FILLER_WORDS)
-
-
-def is_same_fact(stored: str, old_text: str) -> bool:
-    """True when ``stored`` states exactly the same fact as ``old_text``.
-
-    Strict on purpose: it gates a deletion. Both must contain the same
-    meaningful words, ignoring the subject ("I drink" vs "User drinks"), filler
-    and plural endings. A character-similarity ratio is NOT safe here: "editor
-    is Zed" and "editor is VS Code" differ by one short word and would match.
-    """
-    a, b = _fact_words(stored), _fact_words(old_text)
-    return bool(a) and a == b
-
-
-# ---------------------------------------------------------------------------
 # User-facing error messages
 # ---------------------------------------------------------------------------
 
@@ -305,9 +274,8 @@ def classify_error(exc: BaseException) -> Tuple[str, str]:
 # dashboard, and the X-Maximem-Agent header makes the server enforce that.
 
 AGENT_HEADER = "X-Maximem-Agent"
-# ponytail: the server knows "mcp" and "openclaw_tool" only (an unknown value is
-# ignored, so it would not force request mode). Use a Hermes value once it has one.
-AGENT_SOURCE = "mcp"
+# The server forces request mode for this value and shows the request as from Hermes.
+AGENT_SOURCE = "hermes_tool"
 
 _FORGET_ERRORS = {
     "too_many_matches": "Too many memories match that query. Use a more specific query, "

@@ -12,9 +12,11 @@ deployed.
   results, and prints "Moved N memories to trash. Restore within 30 days with
   `hermes maximem_vity restore <deletion id>` or at app.maximem.ai."
 - The agent never deletes. `vity_forget` with `dry_run` false files a deletion request that you
-  approve or reject in the dashboard, and tells you so. The plugin's mirrored removal of a fact
-  Hermes' own memory dropped also files a request (for exactly the matching memories) instead of
-  deleting. Both send `X-Maximem-Agent`, so the server enforces it.
+  approve or reject in the dashboard, and tells you so. It sends `X-Maximem-Agent: hermes_tool`,
+  so the server enforces it and the dashboard shows the request as from Hermes.
+- Hermes' built-in memory removals are no longer mirrored to Vity. When Hermes' own memory removes
+  or replaces a fact, nothing is deleted or requested in Vity (a replace still stores the new
+  text). Only an explicit `vity_forget` removes anything from Vity.
 - Forget refusals read as one plain line: too many matches (use a more specific query or the
   dashboard), search or delete unavailable (nothing was deleted), and an expired or used preview.
 

@@ -37,21 +37,6 @@ def test_format_memory_line_labels_age_and_relevance():
     assert support.format_memory_line({"content": "plain", "created_at": 0, "score": None}) == "- plain"
 
 
-@pytest.mark.parametrize("stored,old,same", [
-    ("User drinks masala chai every morning before standup.",
-     "I drink masala chai every morning before standup.", True),
-    ("User favourite code editor is Zed.", "favourite code editor is Zed", True),
-    ("User favourite code editor is Zed.", "favourite code editor is VS Code", False),
-    ("User lives in Pune.", "User works in Pune.", False),
-    ("User likes tea.", "I don't like tea", False),              # negation must never match
-    ("User lives in Pune.", "User does not live in Pune.", False),
-    ("User drinks tea.", "User drinks tea and coffee.", False),  # a broader fact is a different fact
-    ("", "anything", False),
-])
-def test_is_same_fact_is_strict(stored, old, same):
-    assert support.is_same_fact(stored, old) is same
-
-
 def test_classify_error_by_class_name_including_subclasses():
     class VityError(Exception): ...
     class VityAuthError(VityError): ...

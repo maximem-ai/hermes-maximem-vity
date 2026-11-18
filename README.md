@@ -110,7 +110,7 @@ When `auto_capture` is on, each user and assistant exchange goes into a queue an
 - Capture does not run in automated contexts: cron jobs, subagents and Hermes' own flush runs. This keeps automated text out of your memory.
 - Hermes system notices, such as context-compaction summaries and background-task results, are not saved as if you said them.
 - Each captured message keeps the time Hermes gives it. Without one, the time the turn was queued is used.
-- When the agent's built-in memory tool adds a fact, the plugin also stores it in Vity. When the built-in tool replaces or removes a fact, the plugin removes the old copy from Vity only if it is an exact match for the old text. Anything less certain is left in place. Mirroring is also off when `auto_capture` is off.
+- When the agent's built-in memory tool adds a fact, the plugin also stores it in Vity. When the built-in tool replaces a fact, the plugin stores the new text. Removals are not mirrored: when the built-in tool replaces or removes a fact, the old copy stays in Vity. Only an explicit `vity_forget` (a deletion request you approve in the dashboard) removes anything from Vity. Mirroring is also off when `auto_capture` is off.
 - With `auto_capture` on, the agent calls `vity_store` only when you ask it to remember something, because every turn is already captured. With `auto_capture` off, the agent stores new facts itself.
 
 A write that fails is retried once. If it still fails, or it is still queued when Hermes exits, a captured turn or stored fact is saved to `$HERMES_HOME/vity_pending_writes.jsonl` and sent on the next start. The file is readable only by you and holds at most 200 entries. Writes rejected as invalid, and writes rejected because of a bad API key, are dropped and not saved.
