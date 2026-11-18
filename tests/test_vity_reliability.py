@@ -172,15 +172,23 @@ def test_shutdown_saves_writes_it_could_not_finish(vity_module, monkeypatch, tmp
 
 # -- mirrored replace / remove ----------------------------------------------------------------
 
-def _remove_client(preview_ids, search_hits):
+def _remove_client(vity_module, monkeypatch, preview_ids, search_hits):
+    """A client whose forget calls (via support.api_post) are recorded in ``client.sent``."""
     client = MagicMock()
-    client.forget.side_effect = lambda query, dry_run: {"ids": preview_ids, "count": len(preview_ids)}
     client.search.return_value = search_hits
+    client.sent = []
+
+    def api_post(c, path, body, agent=False):
+        client.sent.append(body)
+        return {"ids": preview_ids, "count": len(preview_ids), "token": "tok"}
+
+    monkeypatch.setattr(vity_module.support, "api_post", api_post)
     return client
 
 
-def test_replace_stores_new_and_removes_exact_old(vity_module, monkeypatch):
-    client = _remove_client(["m1"], [{"id": "m1", "content": "User drinks masala chai before standup."}])
+def test_replace_stores_new_and_requests_removal_of_exact_old(vity_module, monkeypatch):
+    client = _remove_client(vity_module, monkeypatch, ["m1"],
+                            [{"id": "m1", "content": "User drinks masala chai before standup."}])
     provider = _provider(vity_module, monkeypatch, client)
 
     provider.on_memory_write("replace", "user", "I drink green tea before standup.",
@@ -188,12 +196,12 @@ def test_replace_stores_new_and_removes_exact_old(vity_module, monkeypatch):
     provider._write_queue.join()
 
     client.store.assert_called_once_with(content="I drink green tea before standup.", memory_type="preference")
-    assert [c.kwargs["dry_run"] for c in client.forget.call_args_list] == [True, False]
+    assert [b.get("dryRun") or b.get("mode") for b in client.sent] == [True, "request"]   # never a delete
 
 
 def test_remove_is_skipped_when_the_delete_would_hit_other_memories(vity_module, monkeypatch):
     client = _remove_client(
-        ["m1", "m2"],
+        vity_module, monkeypatch, ["m1", "m2"],
         [{"id": "m1", "content": "User drinks masala chai before standup."},
          {"id": "m2", "content": "User drinks coffee after lunch."}])
     provider = _provider(vity_module, monkeypatch, client)
@@ -201,7 +209,7 @@ def test_remove_is_skipped_when_the_delete_would_hit_other_memories(vity_module,
     provider.on_memory_write("remove", "user", "", metadata={"old_text": "I drink masala chai before standup."})
     provider._write_queue.join()
 
-    assert [c.kwargs["dry_run"] for c in client.forget.call_args_list] == [True]   # never deletes
+    assert [b.get("dryRun") for b in client.sent] == [True]   # nothing requested
 
 
 def test_remove_without_old_text_does_nothing(vity_module, monkeypatch):

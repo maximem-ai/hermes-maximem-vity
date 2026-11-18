@@ -171,17 +171,19 @@ VITY_STORE_SCHEMA = {
 VITY_FORGET_SCHEMA = {
     "name": "vity_forget",
     "description": (
-        "Delete memories matching a query from Vity's memory graph. "
-        "Use only when the user explicitly asks to forget something. "
-        "Always call with dry_run=true first to preview, then confirm with the user."
+        "Ask to delete memories matching a query. This tool never deletes anything itself: "
+        "it files a deletion request that the user approves (or rejects) in the Vity dashboard "
+        "at app.maximem.ai. Use only when the user explicitly asks to forget something. "
+        "Call with dry_run=true first to show the user the matching memories."
     ),
     "parameters": {
         "type": "object",
         "properties": {
-            "query": {"type": "string", "description": "What to delete from memory."},
+            "query": {"type": "string", "description": "What to forget."},
             "dry_run": {
                 "type": "boolean",
-                "description": "If true (default), preview deletions without deleting. Pass false to confirm.",
+                "description": "If true (default), list the matching memories. Pass false to file "
+                               "the deletion request for the user to approve.",
             },
         },
         "required": ["query"],
@@ -1192,16 +1194,18 @@ class VityMemoryProvider(MemoryProvider):
             self._remove_matching_memory(client, job["old_text"])
 
     def _remove_matching_memory(self, client, old_text: str) -> None:
-        """Delete the stored copy of ``old_text``, only when it matches exactly.
+        """Ask to delete the stored copy of ``old_text``, only when it matches exactly.
 
-        The API deletes by query, not by id, and a query can match more than the
-        intended fact. So we preview what the delete would remove and proceed
-        only if EVERY memory in that preview is confirmed (by a decrypted search)
-        to be a near-verbatim copy of ``old_text``. Anything else is left alone.
+        The agent never deletes: this files a deletion request the user approves
+        in the dashboard. A query can match more than the intended fact, so we
+        preview the matches and file the request only if EVERY one is confirmed
+        (by a decrypted search) to be a near-verbatim copy of ``old_text``. The
+        preview's token makes the request hold exactly those memories.
         """
-        preview = client.forget(query=old_text, dry_run=True) or {}
+        forget = "/v1/memory/forget"
+        preview = support.api_post(client, forget, {"query": old_text, "dryRun": True}, agent=True) or {}
         doomed = {str(i) for i in (preview.get("ids") or [])}
-        if not doomed:
+        if not doomed or not preview.get("token"):
             return
         confirmed = {
             str(r.get("id")) for r in (client.search(query=old_text, top_k=10) or [])
@@ -1210,7 +1214,8 @@ class VityMemoryProvider(MemoryProvider):
         if not doomed <= confirmed:
             logger.info("Vity skipped removing %d memories: not all were an exact match", len(doomed))
             return
-        client.forget(query=old_text, dry_run=False)
+        support.api_post(client, forget, {"query": old_text, "token": preview["token"], "mode": "request"},
+                         agent=True)
 
     def _persist_pending(self, jobs: List[Dict[str, Any]]) -> None:
         if not jobs or self._pending_path is None:
@@ -1236,6 +1241,9 @@ class VityMemoryProvider(MemoryProvider):
     def _tool_failure(action: str, exc: BaseException) -> str:
         """Tool error the model can act on: names a rejected key, missing credits
         or an outage instead of returning a bare exception (or "no memories")."""
+        plain = support.forget_error(exc)
+        if plain:
+            return tool_error(plain)
         kind, message = support.classify_error(exc)
         return tool_error(message if kind != "other" else f"{action} failed: {message}")
 
@@ -1300,15 +1308,27 @@ class VityMemoryProvider(MemoryProvider):
                 query = str(args.get("query") or "").strip()
                 if not query:
                     return tool_error("Missing required parameter: query (say what to forget)")
-                dry_run = args.get("dry_run", True)
+                # An agent never deletes: dry_run=false files a request the user approves in the
+                # dashboard (the agent header makes the server enforce it whatever mode says).
+                dry_run = args.get("dry_run", True) is not False
+                body = {"query": query, "dryRun": True} if dry_run else {"query": query, "mode": "request"}
                 try:
-                    result = client.forget(query=query, dry_run=dry_run)
-                    count = result.get("count", 0)
-                    if dry_run:
-                        return json.dumps({"result": f"Would delete {count} memories. Call again with dry_run=false to confirm."})
-                    return json.dumps({"result": f"Deleted {count} memories.", "count": count})
+                    result = support.api_post(client, "/v1/memory/forget", body, agent=True) or {}
                 except Exception as e:
                     return self._tool_failure("Forget", e)
+                count = result.get("count", 0)
+                if count == 0:
+                    return json.dumps({"result": "No matching memories. Nothing to delete."})
+                if dry_run:
+                    memories = [{"id": m.get("id"), "preview": m.get("preview")} for m in result.get("memories") or []]
+                    return json.dumps({"result": f"{count} memories match. Show them to the user; if they want "
+                                                 "them gone, call again with dry_run=false to ask for their approval.",
+                                       "memories": memories})
+                url = result.get("approveUrl") or "https://app.maximem.ai"
+                return json.dumps({"result": f"Deletion request filed. Nothing is deleted until the user approves "
+                                             f"it. Tell the user: I asked to delete {count} memories; approve at {url}.",
+                                   "requestId": result.get("requestId"), "approveUrl": url,
+                                   "expiresAt": result.get("expiresAt")})
 
             elif tool_name == "vity_knowledge":
                 query = args.get("query", "")

@@ -158,19 +158,7 @@ def test_store_tool_dispatch(vity_module, monkeypatch):
     fake_client.store.assert_called_once()
 
 
-def test_forget_dry_run_does_not_confirm(vity_module, monkeypatch):
-    fake_client = MagicMock()
-    fake_client.forget.return_value = {"count": 3, "ids": ["a", "b", "c"]}
-    monkeypatch.setitem(
-        sys.modules, "maximem_vity", SimpleNamespace(VityClient=lambda **_: fake_client)
-    )
-
-    provider = vity_module.VityMemoryProvider()
-    provider._api_key = "mx_test_key"
-    out = json.loads(provider.handle_tool_call("vity_forget", {"query": "old"}))
-
-    assert "Would delete 3" in out["result"]
-    fake_client.forget.assert_called_once_with(query="old", dry_run=True)
+# vity_forget (deletion requests, never a delete): tests/test_trash_restore.py
 
 
 def test_auto_capture_disabled_skips_sync(vity_module, monkeypatch):

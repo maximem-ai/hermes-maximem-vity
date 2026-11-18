@@ -113,25 +113,7 @@ def test_search_json_is_unfiltered(cli, monkeypatch, capsys):
     assert "context" in capsys.readouterr().out
 
 
-# -- forget: correct pluralization + friendly empty message ------------------
-
-@pytest.mark.parametrize(
-    "count, confirm, expected",
-    [
-        (1, True, "Deleted 1 memory."),
-        (2, True, "Deleted 2 memories."),
-        (1, False, "Would delete 1 memory."),
-        (3, False, "Would delete 3 memories."),
-        (0, False, "No matching memories to delete."),
-    ],
-)
-def test_forget_messages(cli, monkeypatch, capsys, count, confirm, expected):
-    monkeypatch.setattr(
-        cli, "_make_client",
-        lambda: _fake_client(forget=lambda **_: {"count": count, "ids": []}),
-    )
-    cli._cmd_forget("q", confirm)
-    assert expected in capsys.readouterr().out
+# forget / restore wording: tests/test_trash_restore.py
 
 
 def test_api_errors_print_one_line_not_a_traceback(cli, monkeypatch, capsys):

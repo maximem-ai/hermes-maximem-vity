@@ -1,6 +1,7 @@
 """Stateless helpers for the Vity memory provider.
 
-Pure functions only (no Hermes imports, no network): Profile Card rendering,
+Pure functions only (no Hermes imports, no network of their own; api_post uses
+the caller's SDK client): Profile Card rendering,
 follow-up detection, capture filtering, recall labels, fact matching, error
 messages, and the on-disk queue of writes that could not be delivered. Kept
 apart from provider.py so each piece is small and unit-testable on its own.
@@ -293,6 +294,56 @@ def classify_error(exc: BaseException) -> Tuple[str, str]:
         if cls.__name__ in _ERROR_MESSAGES:
             return _ERROR_MESSAGES[cls.__name__]
     return "other", str(exc)
+
+
+# ---------------------------------------------------------------------------
+# Forget (to the trash) and restore
+# ---------------------------------------------------------------------------
+# Forget moves memories to the trash (restorable for 30 days). A dry run returns
+# the matches and a token; a delete with that token trashes exactly those. An AI
+# agent never deletes: its forget files a request the user approves in the
+# dashboard, and the X-Maximem-Agent header makes the server enforce that.
+
+AGENT_HEADER = "X-Maximem-Agent"
+# ponytail: the server knows "mcp" and "openclaw_tool" only (an unknown value is
+# ignored, so it would not force request mode). Use a Hermes value once it has one.
+AGENT_SOURCE = "mcp"
+
+_FORGET_ERRORS = {
+    "too_many_matches": "Too many memories match that query. Use a more specific query, "
+                        "or delete them in bulk at app.maximem.ai.",
+    "search_unavailable": "Memory search is unavailable right now, so nothing was deleted. Try again in a few minutes.",
+    "delete_unavailable": "Deleting is unavailable right now, so nothing was deleted. Try again in a few minutes.",
+    "token_used": "That preview was already used. Run the forget again without --yes to preview.",
+    "invalid_token": "That preview expired (previews last 15 minutes). Run the forget again without --yes to preview.",
+}
+
+
+def forget_error(exc: BaseException) -> Optional[str]:
+    """Plain message for a forget/restore refusal (by the API's error code), or None."""
+    return _FORGET_ERRORS.get(getattr(exc, "code", None))
+
+
+def api_post(client: Any, path: str, body: Dict[str, Any], agent: bool = False) -> Any:
+    """POST ``body`` over an SDK client's connection, auth and error mapping.
+
+    ponytail: maximem-vity-sdk 0.3.x forget() cannot send a token, a mode or the
+    agent header, and has no restore(); this reaches into the client for them.
+    Replace with the SDK methods once a release has them.
+    """
+    import httpx
+    from maximem_vity._ops import Request
+    from maximem_vity._transport import network_error, new_request_id, parse_response
+
+    request_id = new_request_id()
+    headers = client._call_headers(request_id)
+    if agent:
+        headers[AGENT_HEADER] = AGENT_SOURCE
+    try:
+        resp = client._http.post(f"{client._endpoint}{path}", json=body, headers=headers)
+    except httpx.HTTPError as exc:
+        raise network_error(exc, path, client._timeout, request_id)[0] from exc
+    return parse_response(resp.status_code, resp.text, resp.headers, Request("POST", path, body), request_id)
 
 
 # ---------------------------------------------------------------------------
