@@ -1,6 +1,7 @@
 """Stateless helpers for the Vity memory provider.
 
-Pure functions only (no Hermes imports, no network): Profile Card rendering,
+Pure functions only (no Hermes imports, no network of their own; api_post uses
+the caller's SDK client): Profile Card rendering,
 follow-up detection, capture filtering, recall labels, fact matching, error
 messages, and the on-disk queue of writes that could not be delivered. Kept
 apart from provider.py so each piece is small and unit-testable on its own.
@@ -230,37 +231,6 @@ def format_memory_line(memory: Dict[str, Any], now_s: Optional[float] = None) ->
 
 
 # ---------------------------------------------------------------------------
-# Fact matching (for mirroring built-in memory 'replace' / 'remove')
-# ---------------------------------------------------------------------------
-
-# Words that carry no fact: the subject (the backend rewrites "I" to "User") and
-# filler. Everything else must match exactly for two facts to count as the same.
-_FILLER_WORDS = frozenset({
-    "i", "im", "my", "me", "user", "users", "the", "a", "an", "is", "am", "are", "was",
-    "be", "to", "of", "and", "that", "it", "with", "for", "in", "on", "at",
-})
-
-
-def _fact_words(text: str) -> frozenset:
-    words = re.findall(r"[a-z0-9]+", (text or "").lower())
-    # Naive stemming so "drink"/"drinks" and "theme"/"themes" compare equal.
-    return frozenset(w[:-1] if len(w) > 3 and w.endswith("s") else w
-                     for w in words if w not in _FILLER_WORDS)
-
-
-def is_same_fact(stored: str, old_text: str) -> bool:
-    """True when ``stored`` states exactly the same fact as ``old_text``.
-
-    Strict on purpose: it gates a deletion. Both must contain the same
-    meaningful words, ignoring the subject ("I drink" vs "User drinks"), filler
-    and plural endings. A character-similarity ratio is NOT safe here: "editor
-    is Zed" and "editor is VS Code" differ by one short word and would match.
-    """
-    a, b = _fact_words(stored), _fact_words(old_text)
-    return bool(a) and a == b
-
-
-# ---------------------------------------------------------------------------
 # User-facing error messages
 # ---------------------------------------------------------------------------
 
@@ -293,6 +263,55 @@ def classify_error(exc: BaseException) -> Tuple[str, str]:
         if cls.__name__ in _ERROR_MESSAGES:
             return _ERROR_MESSAGES[cls.__name__]
     return "other", str(exc)
+
+
+# ---------------------------------------------------------------------------
+# Forget (to the trash) and restore
+# ---------------------------------------------------------------------------
+# Forget moves memories to the trash (restorable for 30 days). A dry run returns
+# the matches and a token; a delete with that token trashes exactly those. An AI
+# agent never deletes: its forget files a request the user approves in the
+# dashboard, and the X-Maximem-Agent header makes the server enforce that.
+
+AGENT_HEADER = "X-Maximem-Agent"
+# The server forces request mode for this value and shows the request as from Hermes.
+AGENT_SOURCE = "hermes_tool"
+
+_FORGET_ERRORS = {
+    "too_many_matches": "Too many memories match that query. Use a more specific query, "
+                        "or delete them in bulk at app.maximem.ai.",
+    "search_unavailable": "Memory search is unavailable right now, so nothing was deleted. Try again in a few minutes.",
+    "delete_unavailable": "Deleting is unavailable right now, so nothing was deleted. Try again in a few minutes.",
+    "token_used": "That preview was already used. Run the forget again without --yes to preview.",
+    "invalid_token": "That preview expired (previews last 15 minutes). Run the forget again without --yes to preview.",
+}
+
+
+def forget_error(exc: BaseException) -> Optional[str]:
+    """Plain message for a forget/restore refusal (by the API's error code), or None."""
+    return _FORGET_ERRORS.get(getattr(exc, "code", None))
+
+
+def api_post(client: Any, path: str, body: Dict[str, Any], agent: bool = False) -> Any:
+    """POST ``body`` over an SDK client's connection, auth and error mapping.
+
+    ponytail: maximem-vity-sdk 0.3.x forget() cannot send a token, a mode or the
+    agent header, and has no restore(); this reaches into the client for them.
+    Replace with the SDK methods once a release has them.
+    """
+    import httpx
+    from maximem_vity._ops import Request
+    from maximem_vity._transport import network_error, new_request_id, parse_response
+
+    request_id = new_request_id()
+    headers = client._call_headers(request_id)
+    if agent:
+        headers[AGENT_HEADER] = AGENT_SOURCE
+    try:
+        resp = client._http.post(f"{client._endpoint}{path}", json=body, headers=headers)
+    except httpx.HTTPError as exc:
+        raise network_error(exc, path, client._timeout, request_id)[0] from exc
+    return parse_response(resp.status_code, resp.text, resp.headers, Request("POST", path, body), request_id)
 
 
 # ---------------------------------------------------------------------------

@@ -1,5 +1,34 @@
 # Changelog
 
+## Unreleased
+
+Needs the Maximem backend with the memory trash (memoryinfra #597 and #600). Release after it is
+deployed.
+
+### Changed
+
+- `hermes maximem_vity forget "<query>"` lists the matching memories (id and text) and keeps the
+  preview's token. `--yes` moves exactly those memories to the trash, never a fresh search's
+  results, and prints "Moved N memories to trash. Restore within 30 days with
+  `hermes maximem_vity restore <deletion id>` or at app.maximem.ai."
+- The agent never deletes. `vity_forget` with `dry_run` false files a deletion request that you
+  approve or reject in the dashboard, and tells you so. It sends `X-Maximem-Agent: hermes_tool`,
+  so the server enforces it and the dashboard shows the request as from Hermes. It previews first
+  and files the request only if the server returns a preview token; an older server (which would
+  ignore the request mode and delete for real) gets nothing but the preview, and the agent is told
+  that nothing was deleted.
+- Hermes' built-in memory removals are no longer mirrored to Vity. When Hermes' own memory removes
+  or replaces a fact, nothing is deleted or requested in Vity (a replace still stores the new
+  text). Only an explicit `vity_forget` removes anything from Vity.
+- Forget refusals read as one plain line: too many matches (use a more specific query or the
+  dashboard), search or delete unavailable (nothing was deleted), and an expired or used preview.
+
+### Added
+
+- `hermes maximem_vity restore <deletion id>` and `restore --ids <memory id> ...`: bring forgotten
+  memories back from the trash within 30 days, and say which could not come back and why. It
+  exits 1 when nothing was restored.
+
 ## 1.5.2
 
 ### Fixed

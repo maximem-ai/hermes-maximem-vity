@@ -1,5 +1,5 @@
 """Write queue, mirrored
-replace/remove, outage handling, notices, compression, setup/status."""
+replace/remove (removals never reach Vity), outage handling, notices, compression, setup/status."""
 
 from __future__ import annotations
 
@@ -172,44 +172,22 @@ def test_shutdown_saves_writes_it_could_not_finish(vity_module, monkeypatch, tmp
 
 # -- mirrored replace / remove ----------------------------------------------------------------
 
-def _remove_client(preview_ids, search_hits):
+def test_replace_stores_the_new_text_and_leaves_the_old_one_alone(vity_module, monkeypatch):
     client = MagicMock()
-    client.forget.side_effect = lambda query, dry_run: {"ids": preview_ids, "count": len(preview_ids)}
-    client.search.return_value = search_hits
-    return client
-
-
-def test_replace_stores_new_and_removes_exact_old(vity_module, monkeypatch):
-    client = _remove_client(["m1"], [{"id": "m1", "content": "User drinks masala chai before standup."}])
     provider = _provider(vity_module, monkeypatch, client)
-
     provider.on_memory_write("replace", "user", "I drink green tea before standup.",
                              metadata={"old_text": "I drink masala chai before standup."})
     provider._write_queue.join()
-
     client.store.assert_called_once_with(content="I drink green tea before standup.", memory_type="preference")
-    assert [c.kwargs["dry_run"] for c in client.forget.call_args_list] == [True, False]
+    client.forget.assert_not_called()
 
 
-def test_remove_is_skipped_when_the_delete_would_hit_other_memories(vity_module, monkeypatch):
-    client = _remove_client(
-        ["m1", "m2"],
-        [{"id": "m1", "content": "User drinks masala chai before standup."},
-         {"id": "m2", "content": "User drinks coffee after lunch."}])
-    provider = _provider(vity_module, monkeypatch, client)
-
-    provider.on_memory_write("remove", "user", "", metadata={"old_text": "I drink masala chai before standup."})
-    provider._write_queue.join()
-
-    assert [c.kwargs["dry_run"] for c in client.forget.call_args_list] == [True]   # never deletes
-
-
-def test_remove_without_old_text_does_nothing(vity_module, monkeypatch):
+def test_remove_does_nothing_in_vity(vity_module, monkeypatch):
     client = MagicMock()
     provider = _provider(vity_module, monkeypatch, client)
-    provider.on_memory_write("remove", "user", "", metadata={})
+    provider.on_memory_write("remove", "user", "", metadata={"old_text": "I drink masala chai before standup."})
     provider._write_queue.join()
-    client.forget.assert_not_called()
+    assert client.method_calls == []
 
 
 # -- capture filtering ------------------------------------------------------------------------

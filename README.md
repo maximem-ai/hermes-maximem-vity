@@ -8,7 +8,7 @@
 - After each turn, the plugin saves the exchange so Vity can extract facts and preferences from it.
 - At the start of a session, the agent receives a short Profile Card: who you are, what you do and what you care about.
 - The agent can bring in recent work from your other AI apps (ChatGPT, Claude) when you continue it in Hermes.
-- The agent has tools to search, save and delete memories, and you have a command line for the same tasks.
+- The agent has tools to search and save memories and to ask you to approve deleting them, and you have a command line for the same tasks.
 - If the memory service is slow or down, the turn continues without memory. It does not wait.
 
 ## Requirements
@@ -110,7 +110,7 @@ When `auto_capture` is on, each user and assistant exchange goes into a queue an
 - Capture does not run in automated contexts: cron jobs, subagents and Hermes' own flush runs. This keeps automated text out of your memory.
 - Hermes system notices, such as context-compaction summaries and background-task results, are not saved as if you said them.
 - Each captured message keeps the time Hermes gives it. Without one, the time the turn was queued is used.
-- When the agent's built-in memory tool adds a fact, the plugin also stores it in Vity. When the built-in tool replaces or removes a fact, the plugin removes the old copy from Vity only if it is an exact match for the old text. Anything less certain is left in place. Mirroring is also off when `auto_capture` is off.
+- When the agent's built-in memory tool adds a fact, the plugin also stores it in Vity. When the built-in tool replaces a fact, the plugin stores the new text. Removals are not mirrored: when the built-in tool replaces or removes a fact, the old copy stays in Vity. Only an explicit `vity_forget` (a deletion request you approve in the dashboard) removes anything from Vity. Mirroring is also off when `auto_capture` is off.
 - With `auto_capture` on, the agent calls `vity_store` only when you ask it to remember something, because every turn is already captured. With `auto_capture` off, the agent stores new facts itself.
 
 A write that fails is retried once. If it still fails, or it is still queued when Hermes exits, a captured turn or stored fact is saved to `$HERMES_HOME/vity_pending_writes.jsonl` and sent on the next start. The file is readable only by you and holds at most 200 entries. Writes rejected as invalid, and writes rejected because of a bad API key, are dropped and not saved.
@@ -202,7 +202,7 @@ You do not need special commands. Ask the agent to "remember that ..." and it ca
 | `vity_knowledge` | `query` (required), `limit` (default 10, max 100) | Returns topic-level knowledge built from many memories, one item per topic. |
 | `vity_profile` | none | Returns your Profile Card, up to 20 values per field. |
 | `vity_store` | `content` (required), `memory_type` (`fact`, `preference`, `emotion`, `episode`, `knowledge`, `profile`; default `fact`) | Saves one memory. |
-| `vity_forget` | `query` (required), `dry_run` (default `true`) | Deletes memories that match a query. With `dry_run` true it only reports how many would be deleted. |
+| `vity_forget` | `query` (required), `dry_run` (default `true`) | Asks to delete memories that match a query. It never deletes anything itself. With `dry_run` true it lists the matching memories; with `dry_run` false it files a deletion request that you approve or reject in the dashboard (app.maximem.ai, Pending deletions). Requests you do not act on expire after 7 days. |
 | `vity_meeting_recall` | `question` (required), `meeting_type`, `status` | Answers questions about your meetings, decisions and attendees. Needs Meeting Memory on your account. Otherwise it says so. |
 
 Use `vity_recall` for a specific fact you stated. Use `vity_knowledge` for what you know about a topic.
@@ -220,7 +220,10 @@ The `hermes maximem_vity` commands are available while `maximem_vity` is the act
 | `hermes maximem_vity status` | Shows key, SDK, endpoint and main settings, then checks the connection. Running `hermes maximem_vity` alone does the same. |
 | `hermes maximem_vity search "<query>"` | Semantic search. Options: `--limit N` (default 10), `--json` for raw output. |
 | `hermes maximem_vity store "<text>"` | Saves a memory. Option: `--type` (same values as `vity_store`, default `fact`). |
-| `hermes maximem_vity forget "<query>"` | Shows how many memories match. Add `--yes` to delete them. |
+| `hermes maximem_vity forget "<query>"` | Lists the matching memories (id and text). Add `--yes` within 15 minutes to move exactly those memories to the trash. `--yes` without an earlier preview lists the matches and moves them in one step. |
+| `hermes maximem_vity restore <deletion id>` | Brings back everything one `forget --yes` moved to the trash. `restore --ids <memory id> ...` brings back single memories. |
+
+Forgotten memories stay in the trash for 30 days, and you can restore them with `restore` or at app.maximem.ai. After 30 days they are erased for good. Only the dashboard can erase them sooner. When a query matches too many memories, `forget` refuses: use a more specific query, or delete in bulk from the dashboard.
 
 The installer command has its own subcommands:
 
@@ -244,7 +247,7 @@ What the plugin sends to the Maximem API, using your API key:
 
 - The text of your message, for the recall search and the live-context check.
 - Each captured user and assistant message, and facts you or the agent store.
-- Delete requests, and the text used to find a memory to delete.
+- Forget and restore requests, and the text used to find a memory to forget.
 
 The API key decides which memory space is used.
 

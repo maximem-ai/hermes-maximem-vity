@@ -171,17 +171,19 @@ VITY_STORE_SCHEMA = {
 VITY_FORGET_SCHEMA = {
     "name": "vity_forget",
     "description": (
-        "Delete memories matching a query from Vity's memory graph. "
-        "Use only when the user explicitly asks to forget something. "
-        "Always call with dry_run=true first to preview, then confirm with the user."
+        "Ask to delete memories matching a query. This tool never deletes anything itself: "
+        "it files a deletion request that the user approves (or rejects) in the Vity dashboard "
+        "at app.maximem.ai. Use only when the user explicitly asks to forget something. "
+        "Call with dry_run=true first to show the user the matching memories."
     ),
     "parameters": {
         "type": "object",
         "properties": {
-            "query": {"type": "string", "description": "What to delete from memory."},
+            "query": {"type": "string", "description": "What to forget."},
             "dry_run": {
                 "type": "boolean",
-                "description": "If true (default), preview deletions without deleting. Pass false to confirm.",
+                "description": "If true (default), list the matching memories. Pass false to file "
+                               "the deletion request for the user to approve.",
             },
         },
         "required": ["query"],
@@ -1113,20 +1115,16 @@ class VityMemoryProvider(MemoryProvider):
     def on_memory_write(self, action, target, content, metadata=None):
         """Mirror Hermes' built-in memory writes into Vity.
 
-        - ``add``: store the fact.
-        - ``replace``: store the new text, then remove the old one if it can be
-          matched exactly (``metadata["old_text"]``), so recall doesn't return
-          both the outdated and the current version.
-        - ``remove``: remove the matching memory, same exact-match rule.
+        - ``add`` / ``replace``: store the (new) fact.
+        - Removals are NOT mirrored: when Hermes' own memory drops or replaces a
+          fact, the copy in Vity stays. Only an explicit ``vity_forget`` (a
+          request the user approves) removes anything from Vity.
         """
         if not self._auto_capture or not self._write_enabled:
             return
-        old_text = str((metadata or {}).get("old_text") or "").strip()
         memory_type = "preference" if target == "user" else "fact"
         if action in ("add", "replace") and content:
             self._enqueue_write({"kind": "store", "content": content, "memory_type": memory_type})
-        if action in ("replace", "remove") and old_text:
-            self._enqueue_write({"kind": "remove", "old_text": old_text})
 
     # -- Write queue -----------------------------------------------------------
 
@@ -1188,29 +1186,6 @@ class VityMemoryProvider(MemoryProvider):
             client.capture(messages=job["messages"], agent_id="hermes", session_key=job["session_key"])
         elif job["kind"] == "store":
             client.store(content=job["content"], memory_type=job["memory_type"])
-        elif job["kind"] == "remove":
-            self._remove_matching_memory(client, job["old_text"])
-
-    def _remove_matching_memory(self, client, old_text: str) -> None:
-        """Delete the stored copy of ``old_text``, only when it matches exactly.
-
-        The API deletes by query, not by id, and a query can match more than the
-        intended fact. So we preview what the delete would remove and proceed
-        only if EVERY memory in that preview is confirmed (by a decrypted search)
-        to be a near-verbatim copy of ``old_text``. Anything else is left alone.
-        """
-        preview = client.forget(query=old_text, dry_run=True) or {}
-        doomed = {str(i) for i in (preview.get("ids") or [])}
-        if not doomed:
-            return
-        confirmed = {
-            str(r.get("id")) for r in (client.search(query=old_text, top_k=10) or [])
-            if support.is_same_fact(r.get("content") or "", old_text)
-        }
-        if not doomed <= confirmed:
-            logger.info("Vity skipped removing %d memories: not all were an exact match", len(doomed))
-            return
-        client.forget(query=old_text, dry_run=False)
 
     def _persist_pending(self, jobs: List[Dict[str, Any]]) -> None:
         if not jobs or self._pending_path is None:
@@ -1236,6 +1211,9 @@ class VityMemoryProvider(MemoryProvider):
     def _tool_failure(action: str, exc: BaseException) -> str:
         """Tool error the model can act on: names a rejected key, missing credits
         or an outage instead of returning a bare exception (or "no memories")."""
+        plain = support.forget_error(exc)
+        if plain:
+            return tool_error(plain)
         kind, message = support.classify_error(exc)
         return tool_error(message if kind != "other" else f"{action} failed: {message}")
 
@@ -1300,15 +1278,35 @@ class VityMemoryProvider(MemoryProvider):
                 query = str(args.get("query") or "").strip()
                 if not query:
                     return tool_error("Missing required parameter: query (say what to forget)")
-                dry_run = args.get("dry_run", True)
+                # An agent never deletes: dry_run=false files a request the user approves in the
+                # dashboard (the agent header makes the server enforce it whatever mode says).
+                dry_run = args.get("dry_run", True) is not False
                 try:
-                    result = client.forget(query=query, dry_run=dry_run)
-                    count = result.get("count", 0)
-                    if dry_run:
-                        return json.dumps({"result": f"Would delete {count} memories. Call again with dry_run=false to confirm."})
-                    return json.dumps({"result": f"Deleted {count} memories.", "count": count})
+                    result = support.api_post(client, "/v1/memory/forget",
+                                              {"query": query, "dryRun": True}, agent=True) or {}
+                    if not dry_run and result.get("count", 0):
+                        # An older server ignores mode and would delete for real; only a server whose
+                        # dry run returns a token knows deletion requests, so without one, stop here.
+                        if not result.get("token"):
+                            return tool_error("This Vity server does not support safe deletion yet. Nothing "
+                                              "was deleted; the user can delete memories at app.maximem.ai.")
+                        result = support.api_post(client, "/v1/memory/forget",
+                                                  {"query": query, "mode": "request"}, agent=True) or {}
                 except Exception as e:
                     return self._tool_failure("Forget", e)
+                count = result.get("count", 0)
+                if count == 0:
+                    return json.dumps({"result": "No matching memories. Nothing to delete."})
+                if dry_run:
+                    memories = [{"id": m.get("id"), "preview": m.get("preview")} for m in result.get("memories") or []]
+                    return json.dumps({"result": f"{count} memories match. Show them to the user; if they want "
+                                                 "them gone, call again with dry_run=false to ask for their approval.",
+                                       "memories": memories})
+                url = result.get("approveUrl") or "https://app.maximem.ai"
+                return json.dumps({"result": f"Deletion request filed. Nothing is deleted until the user approves "
+                                             f"it. Tell the user: I asked to delete {count} memories; approve at {url}.",
+                                   "requestId": result.get("requestId"), "approveUrl": url,
+                                   "expiresAt": result.get("expiresAt")})
 
             elif tool_name == "vity_knowledge":
                 query = args.get("query", "")
