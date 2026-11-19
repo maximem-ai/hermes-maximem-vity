@@ -1,6 +1,6 @@
 """Forget moves memories to the trash (restorable 30 days); agents only file deletion requests.
 
-Server contract (memoryinfra #597/#600): a dry run returns the matches and a token; a delete with that
+Server contract: a dry run returns the matches and a token; a delete with that
 token trashes exactly what the dry run listed; ``mode: "request"`` (forced by the X-Maximem-Agent header)
 files a request the user approves in the dashboard; POST /v1/memory/restore undoes a forget.
 """

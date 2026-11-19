@@ -301,7 +301,7 @@ def test_router_errors(fake, status, reason):
 # ---------------------------------------------------------------- machine identity
 
 @pytest.mark.parametrize("host,label", [
-    ("Udays-MacBook.local", "Udays-MacBook.local"),
+    ("Alexs-MacBook.local", "Alexs-MacBook.local"),
     ("evil\u202ename<script>", "evil-name-script-"),
     ("", "this computer"),
     ("x" * 80, "x" * 40),
