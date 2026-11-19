@@ -1,7 +1,7 @@
 """Browser sign-in for ``hermes-maximem-vity install``: the user signs in on maximem.ai and the plugin
 gets its own Maximem API key, so nobody has to copy one from the dashboard.
 
-Same flow and safety properties as the npm CLI (clients/vity/lib/login.mjs in memoryinfra):
+Same flow and safety properties as the Vity npm CLI's sign-in:
 
 - OAuth authorization code + PKCE S256 with a loopback redirect to 127.0.0.1 only;
 - the PKCE verifier never leaves this process;

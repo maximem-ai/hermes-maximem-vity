@@ -1,9 +1,8 @@
 # Changelog
 
-## Unreleased
+## 1.5.3
 
-Needs the Maximem backend with the memory trash (memoryinfra #597 and #600). Release after it is
-deployed.
+Requires a Maximem Vity server with memory trash and deletion requests, live since November 2026.
 
 ### Changed
 
