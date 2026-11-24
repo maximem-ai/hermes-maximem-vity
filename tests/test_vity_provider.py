@@ -354,10 +354,12 @@ def test_no_context_defaults_to_writes_enabled(vity_module, monkeypatch):
 
 def test_initialize_warms_recall_in_background(vity_module, monkeypatch):
     provider, fake_client = _init_with_stub_client(vity_module, monkeypatch, agent_context="primary")
-    # The warm-up thread fires one throwaway search off-turn.
+    # The warm-up opens the recall client's connection off-turn with a free call: a search costs the
+    # user a credit (measured: one per Hermes start), and the warm-up answers nothing.
     if provider._prefetch_thread:
         provider._prefetch_thread.join(timeout=2)
-    fake_client.search.assert_called_once()
+    fake_client.search.assert_not_called()
+    assert fake_client.meetings_enabled.called
 
 
 def test_recall_deadline_caps_slow_prefetch(vity_module, monkeypatch):

@@ -714,22 +714,19 @@ class VityMemoryProvider(MemoryProvider):
     def _warm_recall(self) -> None:
         """One-time background warm-up of the recall client and connection.
 
-        Builds the short-timeout client and fires a tiny throwaway search so the
-        SDK import, HTTP client, DNS, and TLS handshake are all paid off-turn.
-        The first user turn then hits a warm connection (~2s) instead of a cold
-        one (~12s). Fully best-effort: any failure is ignored.
+        Builds the short-timeout client and makes one free call with it (the
+        meeting-memory availability probe) so the SDK import, HTTP client, DNS
+        and TLS handshake are all paid off-turn. The first user turn then hits a
+        warm connection (~2s) instead of a cold one (~12s). A search would also
+        warm it but costs the user a credit for nothing. Best-effort: any
+        failure is ignored.
         """
         try:
-            self._get_recall_client().search(query="warmup", top_k=1)
+            # Also answers the meeting tool's "is it enabled" without a later round-trip.
+            self._meetings_enabled = self._get_recall_client().meetings_enabled()
         except Exception as e:
             self._note_service_issue(e)
             logger.debug("Vity recall warm-up skipped (non-fatal): %s", e)
-        # Probe meeting-memory availability off-turn, so the meeting tool can
-        # answer "not enabled" without a network round-trip later.
-        try:
-            self._meetings_enabled = self._get_client().meetings_enabled()
-        except Exception as e:
-            logger.debug("Vity meetings probe skipped (non-fatal): %s", e)
         # Off-turn: warm-load the general user profile for a one-time,
         # session-start injection.
         self._load_profile()
