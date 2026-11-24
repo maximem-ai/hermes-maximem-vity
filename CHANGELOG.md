@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.5.4
+
+### Fixed
+
+- The background warm-up when Hermes starts no longer runs a throwaway memory search. That search
+  was billed like any other, once per gateway start and on every one-shot (`-z`) run. The warm-up
+  now opens the connection with a free check (whether Meeting Memory is on).
+
 ## 1.5.3
 
 Requires a Maximem Vity server with memory trash and deletion requests, live since November 2026.
