@@ -32,7 +32,7 @@ import urllib.request
 
 logger = logging.getLogger(__name__)
 
-PLUGIN_VERSION = "1.5.3"
+PLUGIN_VERSION = "1.5.4"
 
 # Telemetry is proxied through the Maximem router, which holds the PostHog key
 # server-side. No project key is shipped to user machines.
